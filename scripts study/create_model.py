@@ -5,7 +5,7 @@ import sys
 import os 
 
 sys.path.append(os.path.abspath('/workspace/sunggu'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/utils'))
+sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/utils'))
 
 
 ######################################################################################################################################################################
@@ -17,14 +17,14 @@ from RED_CNN.networks import RED_CNN
 from EDCNN.code.edcnn_model import EDCNN
 from SACNN.model import SACNN, AutoEncoder_2D
 from WGAN_VGG.networks import WGAN_VGG
-from DU_GAN.models.DUGAN.networks import DUGAN, FSGAN
+from DUGAN.networks import DUGAN
 from MAP_NN.models import MAP_NN
 from TED_net.t2t_shortcuts import TED_Net, TED_Net_Mixed
 from Restormer_module.Restormer import Restormer
 # Ours Works
 from Ours.MLPmixer import MLPMixer, Img2Img_Mixer, HF_ConvMixer
-from Ours.models import *
-from Unet_sunggu.model import *
+from Ours.network import *
+from Ours.Unet_Factory import *
 
 def create_model(name):
     if name == "SACNN_AutoEncoder":

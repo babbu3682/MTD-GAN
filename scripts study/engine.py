@@ -51,6 +51,7 @@ def save_dicom(original_dcm_path, pred_output, save_path):
 # Setting...!
 fn_denorm         = lambda x: (x * 0.5) + 0.5
 fn_tonumpy        = lambda x: x.cpu().detach().numpy().transpose(0, 2, 3, 1)
+fn_tonumpy3d      = lambda x: x.cpu().detach().numpy().transpose(0, 1, 3, 4, 2)
 # fn_denorm_window  = visual_windowing_V2
 
 ###################################################################             Ours                                ###################################################################
@@ -1016,6 +1017,7 @@ def valid_SACNN_Previous_3D(model, criterion, data_loader, device, epoch, save_d
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 # 수정중
+from monai.transforms import SaveImage
 @torch.no_grad()
 def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
 
@@ -1023,10 +1025,12 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
     model.eval()
     print_freq = 10
 
+    saver = SaveImage(output_dir="./output", output_ext=".nii.gz", resample=False, separate_folder=False)
+
     iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10)    
     for batch_data in iterator:
         
-        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['dcm_low'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(save_dir.replace('/png/', '/nii/') + batch_data['dcm_low'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
         os.makedirs(save_dir                           + batch_data['dcm_low'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
 
         # forward pass
@@ -1036,21 +1040,14 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
         # Forward Generator
         pred_n_100 = sliding_window_inference(inputs=input_low, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
 
-        # PNG Save
-        input_low    = dicom_denormalize(fn_tonumpy(input_low)).clip(min=0, max=80)
-        input_high   = dicom_denormalize(fn_tonumpy(input_high)).clip(min=0, max=80)
-        pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80)
-        plt.imsave(save_dir+batch_data['dcm_low'][0].split('/')[7]  + '/gt_low_'     + batch_data['dcm_low'][0].split('/')[-1].replace('.dcm', '.png'),  input_low[0].squeeze(),   cmap="gray")
-        plt.imsave(save_dir+batch_data['dcm_high'][0].split('/')[7] + '/gt_high_'    + batch_data['dcm_high'][0].split('/')[-1].replace('.dcm', '.png'), input_high[0].squeeze(),  cmap="gray")
-        plt.imsave(save_dir+batch_data['dcm_low'][0].split('/')[7]  + '/pred_n_100_' + batch_data['dcm_low'][0].split('/')[-1].replace('.dcm', '.png'),  pred_n_100[0].squeeze(),  cmap="gray")   
+        # NII Save [C,H,W,[D]].
 
-        # NII Save
-        input_low_dcm    = dicom_denormalize(fn_tonumpy(input_low))
-        input_high_dcm   = dicom_denormalize(fn_tonumpy(input_high))
-        pred_n_100_dcm   = dicom_denormalize(fn_tonumpy(pred_n_100))       
-        save_dicom(batch_data['dcm_low'][0],  input_low_dcm,  save_dir.replace('/png/', '/dcm/')+batch_data['dcm_low'][0].split('/')[7]  + '/gt_low_'     + batch_data['dcm_low'][0].split('/')[-1])        
-        save_dicom(batch_data['dcm_high'][0], input_high_dcm, save_dir.replace('/png/', '/dcm/')+batch_data['dcm_high'][0].split('/')[7] + '/gt_high_'    + batch_data['dcm_high'][0].split('/')[-1])
-        save_dicom(batch_data['dcm_low'][0],  pred_n_100_dcm, save_dir.replace('/png/', '/dcm/')+batch_data['dcm_low'][0].split('/')[7]  + '/pred_n_100_' + batch_data['dcm_low'][0].split('/')[-1])        
+        input_low_dcm    = dicom_denormalize(fn_tonumpy3d(input_low))
+        input_high_dcm   = dicom_denormalize(fn_tonumpy3d(input_high))
+        pred_n_100_dcm   = dicom_denormalize(fn_tonumpy3d(pred_n_100))       
+        saver(batch_data['dcm_low'][0],  {"filename_or_obj": save_dir.replace('/png/', '/nii/')+batch_data['dcm_low'][0].split('/')[7]  + '/gt_low_'     + batch_data['dcm_low'][0].split('/')[-1].replace('.dcm', '.nii.gz')})        
+        saver(batch_data['dcm_high'][0], {"filename_or_obj":save_dir.replace('/png/', '/nii/')+batch_data['dcm_high'][0].split('/')[7] + '/gt_high_'    + batch_data['dcm_high'][0].split('/')[-1].replace('.dcm', '.nii.gz')})        
+        saver(batch_data['dcm_low'][0],  {"filename_or_obj":save_dir.replace('/png/', '/nii/')+batch_data['dcm_low'][0].split('/')[7]  + '/pred_n_100_' + batch_data['dcm_low'][0].split('/')[-1].replace('.dcm', '.nii.gz')})        
         
         # Metric
         original_result, pred_result = compute_measure(input_low_dcm, input_high_dcm, pred_n_100_dcm, 4095)

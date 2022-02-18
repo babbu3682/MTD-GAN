@@ -13,7 +13,7 @@ from .utils.ops import turn_on_spectral_norm
 from .utils.metrics import compute_ssim, compute_psnr, compute_rmse
 
 from .DUGAN_wrapper import *
-from .REDCNN_wrapper import Generator
+from .REDCNN.REDCNN_wrapper import Generator
 
 
 # My factory 에 맞게 변형한 버전

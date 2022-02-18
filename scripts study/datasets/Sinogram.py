@@ -1,16 +1,9 @@
 import torch
 import numpy as np
-import pandas as pd
-# from torch.utils.data import Dataset as BaseDataset
-# import skimage
-# from pydicom import dcmread
-
 from monai.transforms import *
 from monai.data import Dataset
 import re
 import glob
-import cv2
-import functools
 import pydicom
 
 # import warnings
@@ -436,8 +429,6 @@ def TEST_Sinogram_Dataset_OLD(mode, range_minus1_plus1):
 
     return Dataset(data=files, transform=transforms), default_collate_fn
     
-
-
 def TEST_Sinogram_Dataset_DCM(mode, range_minus1_plus1):
     if mode == 'sinogram':
         low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
@@ -500,8 +491,6 @@ def TEST_Sinogram_Dataset_DCM(mode, range_minus1_plus1):
 
 
     return Dataset(data=files, transform=transforms), default_collate_fn
-
-
 
 def TEST_Sinogram_Dataset_NII(mode, range_minus1_plus1):
     if mode == 'sinogram':

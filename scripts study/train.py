@@ -7,9 +7,9 @@ import os
 import sys
 from pathlib import Path
 sys.path.append(os.path.abspath('/workspace/sunggu'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/utils'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/module'))
+sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory'))
+sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/utils'))
+sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/module'))
 
 import torch
 import numpy as np

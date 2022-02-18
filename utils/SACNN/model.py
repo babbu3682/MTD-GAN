@@ -77,9 +77,9 @@ class AutoEncoder_2D(nn.Module):
 
         self.lay5     = AE_Conv2D_Block(in_channels=256, out_channels=256)
         self.lay6     = AE_Conv2D_Block(in_channels=256, out_channels=128)
-        self.deconv1  = nn.ConvTranspose3d(128, 128, kernel_size=2, stride=2)
+        self.deconv1  = nn.ConvTranspose2d(128, 128, kernel_size=2, stride=2)
         self.lay7     = AE_Conv2D_Block(in_channels=128, out_channels=64)
-        self.deconv2  = nn.ConvTranspose3d(64, 64, kernel_size=2, stride=2)
+        self.deconv2  = nn.ConvTranspose2d(64, 64, kernel_size=2, stride=2)
         self.lay8     = AE_Conv2D_Block(in_channels=64, out_channels=1)
         
         
