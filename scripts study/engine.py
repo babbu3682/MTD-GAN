@@ -1034,7 +1034,6 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
         input_high = batch_data['high'].to(device)
         
         # Forward Generator
-        pred_n_100 = model(input_low)
         pred_n_100 = sliding_window_inference(inputs=input_low, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
 
         # PNG Save
