@@ -1,0 +1,415 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# !pip install pretrainedmodels==0.7.4\n",
+    "# !pip install efficientnet-pytorch==0.6.3\n",
+    "# !pip install timm==0.3.2"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# # CUDA 11.1\n",
+    "# !pip install torch==1.8.0 torchvision==0.9.0 torchaudio==0.8.0"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# RMSE -> MAE Loss 꿀팁!!"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Mon Dec 13 03:08:35 2021       \r\n",
+      "+-----------------------------------------------------------------------------+\r\n",
+      "| NVIDIA-SMI 460.73.01    Driver Version: 460.73.01    CUDA Version: 11.2     |\r\n",
+      "|-------------------------------+----------------------+----------------------+\r\n",
+      "| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |\r\n",
+      "| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |\r\n",
+      "|                               |                      |               MIG M. |\r\n",
+      "|===============================+======================+======================|\r\n",
+      "|   0  TITAN RTX           Off  | 00000000:02:00.0 Off |                  N/A |\r\n",
+      "| 41%   35C    P8    13W / 280W |   8902MiB / 24220MiB |      0%      Default |\r\n",
+      "|                               |                      |                  N/A |\r\n",
+      "+-------------------------------+----------------------+----------------------+\r\n",
+      "|   1  TITAN RTX           Off  | 00000000:03:00.0 Off |                  N/A |\r\n",
+      "| 40%   36C    P8     4W / 280W |      3MiB / 24220MiB |      0%      Default |\r\n",
+      "|                               |                      |                  N/A |\r\n",
+      "+-------------------------------+----------------------+----------------------+\r\n",
+      "|   2  TITAN RTX           Off  | 00000000:82:00.0 Off |                  N/A |\r\n",
+      "| 39%   49C    P0    58W / 280W |      0MiB / 24220MiB |      0%      Default |\r\n",
+      "|                               |                      |                  N/A |\r\n",
+      "+-------------------------------+----------------------+----------------------+\r\n",
+      "|   3  TITAN RTX           Off  | 00000000:83:00.0 Off |                  N/A |\r\n",
+      "| 24%   55C    P0    57W / 280W |      0MiB / 24220MiB |      0%      Default |\r\n",
+      "|                               |                      |                  N/A |\r\n",
+      "+-------------------------------+----------------------+----------------------+\r\n",
+      "                                                                               \r\n",
+      "+-----------------------------------------------------------------------------+\r\n",
+      "| Processes:                                                                  |\r\n",
+      "|  GPU   GI   CI        PID   Type   Process name                  GPU Memory |\r\n",
+      "|        ID   ID                                                   Usage      |\r\n",
+      "|=============================================================================|\r\n",
+      "+-----------------------------------------------------------------------------+\r\n"
+     ]
+    }
+   ],
+   "source": [
+    "!nvidia-smi\n",
+    "\n",
+    "import os\n",
+    "os.environ[\"CUDA_DEVICE_ORDER\"]=\"PCI_BUS_ID\"\n",
+    "os.environ[\"CUDA_VISIBLE_DEVICES\"]=\"2, 3\""
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "/workspace/sunggu/4.Dose_img2img/scripts study\n"
+     ]
+    }
+   ],
+   "source": [
+    "cd /workspace/sunggu/4.Dose_img2img/scripts study"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "1.8.0+cu111\n"
+     ]
+    }
+   ],
+   "source": [
+    "import torch\n",
+    "print(torch.__version__)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "CPU 갯수 =  32\n"
+     ]
+    }
+   ],
+   "source": [
+    "import multiprocessing\n",
+    "print(\"CPU 갯수 = \", multiprocessing.cpu_count())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# ECMT_2D"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "inintializing...!\n",
+      "^C\n"
+     ]
+    }
+   ],
+   "source": [
+    "!python train.py \\\n",
+    "--batch-size 4 \\\n",
+    "--epochs 20000 \\\n",
+    "--min-lr 5e-6 \\\n",
+    "--lr 2e-4 \\\n",
+    "--data-set 'Sinogram_DCM' \\\n",
+    "--model-name 'ECMT_2D' \\\n",
+    "--criterion 'Compound Loss' \\\n",
+    "--output_dir '/workspace/sunggu/4.Dose_img2img/model/[Privious]ECMT_2D' \\\n",
+    "--save_dir '/workspace/sunggu/4.Dose_img2img/Predictions/Train/png/[Privious]ECMT_2D/low2high/' \\\n",
+    "--validate-every 1 \\\n",
+    "--num_workers 4 \\\n",
+    "--criterion_mode 'not balance' \\\n",
+    "--teacher_forcing \"False\" \\\n",
+    "--patch_training \"True\" \\\n",
+    "--multi-gpu-mode 'DataParallel' \\\n",
+    "--resume '/workspace/sunggu/4.Dose_img2img/model/[Privious]ECMT_2D/epoch_16_checkpoint.pth'\n",
+    "# --multi-gpu-mode 'DataParallel' \\"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Log check"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import glob\n",
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "def read_log(path):\n",
+    "    log_list = []\n",
+    "    lines = open(path, 'r').read().splitlines() \n",
+    "    for i in range(len(lines)):\n",
+    "        exec('log_list.append('+lines[i] + ')')\n",
+    "    return  log_list"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "log_list = read_log(path = '/workspace/sunggu/4.Dose_img2img/model/[Privious]ED_CNN/log.txt')\n",
+    "\n",
+    "train_lr   = [ log_list[i]['train_lr'] for i in range(len(log_list)) ]\n",
+    "train_loss = [ log_list[i]['train_loss'] for i in range(len(log_list)) ]\n",
+    "valid_loss = [ log_list[i]['valid_loss'] for i in range(len(log_list)) ]\n",
+    "epoch      = [ log_list[i]['epoch'] for i in range(len(log_list)) ]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "plt.plot(train_loss)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "plt.plot(valid_loss)\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "np.argsort(train_loss)[:10]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "np.argsort(valid_loss)[:10]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "set(np.argsort(valid_loss)[:10]) & set(np.argsort(train_loss)[:10])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# TEST"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!python test.py \\\n",
+    "--training-mode 'sinogram' \\\n",
+    "--data-set 'TEST_Sinogram_DCM' \\\n",
+    "--model-name 'ED_CNN' \\\n",
+    "--save_dir '/workspace/sunggu/4.Dose_img2img/Predictions/Test/png/[Privious]ED_CNN/epoch_999/' \\\n",
+    "--num_workers 4 \\\n",
+    "--pin-mem \\\n",
+    "--range-minus1-plus1 'False' \\\n",
+    "--teacher_forcing \"False\" \\\n",
+    "--resume '/workspace/sunggu/4.Dose_img2img/model/[Privious]ED_CNN/epoch_999_checkpoint.pth'"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "##### 978 epoch"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "\n",
+    "Original === \n",
+    "PSNR avg: 54.4628 \n",
+    "SSIM avg: 0.9956 \n",
+    "RMSE avg: 7.9607\n",
+    "\n",
+    "\n",
+    "Predictions === \n",
+    "PSNR avg: 57.6190 \n",
+    "SSIM avg: 0.9980 \n",
+    "RMSE avg: 5.5423\n",
+    "***********************************************"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.6.9"
+  },
+  "toc": {
+   "base_numbering": 1,
+   "nav_menu": {},
+   "number_sections": true,
+   "sideBar": true,
+   "skip_h1_title": false,
+   "title_cell": "Table of Contents",
+   "title_sidebar": "Contents",
+   "toc_cell": false,
+   "toc_position": {
+    "height": "calc(100% - 180px)",
+    "left": "10px",
+    "top": "150px",
+    "width": "222.969px"
+   },
+   "toc_section_display": true,
+   "toc_window_display": true
+  },
+  "varInspector": {
+   "cols": {
+    "lenName": 16,
+    "lenType": 16,
+    "lenVar": 40
+   },
+   "kernels_config": {
+    "python": {
+     "delete_cmd_postfix": "",
+     "delete_cmd_prefix": "del ",
+     "library": "var_list.py",
+     "varRefreshCmd": "print(var_dic_list())"
+    },
+    "r": {
+     "delete_cmd_postfix": ") ",
+     "delete_cmd_prefix": "rm(",
+     "library": "var_list.r",
+     "varRefreshCmd": "cat(var_dic_list()) "
+    }
+   },
+   "types_to_exclude": [
+    "module",
+    "function",
+    "builtin_function_or_method",
+    "instance",
+    "_Feature"
+   ],
+   "window_display": false
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
