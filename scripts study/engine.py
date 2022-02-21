@@ -11,6 +11,7 @@ import os
 import matplotlib.pyplot as plt
 from metrics import compute_measure
 from monai.inferers import sliding_window_inference
+import json
 
 
 
@@ -42,10 +43,12 @@ def save_dicom(original_dcm_path, pred_output, save_path):
 
     dcm.PixelData = pred_img.squeeze().tobytes()
     # dcm.PixelData = pred_img.astype('uint16').squeeze().tobytes()
+    # IMA version
+    save_path = save_path.split('.IMA')[:-1][0] + '.dcm'
     dcm.save_as(save_path)
     
     # print("after == ", pred_img.max(), pred_img.min(), pred_img.dtype)  # after ==  3581 / 0 / int16
-    print(save_path)
+    # print(save_path)
 
 
 # Setting...!
@@ -53,7 +56,7 @@ fn_denorm         = lambda x: (x * 0.5) + 0.5
 fn_tonumpy        = lambda x: x.cpu().detach().numpy().transpose(0, 2, 3, 1)
 fn_tonumpy3d      = lambda x: x.cpu().detach().numpy().transpose(0, 1, 3, 4, 2)
 # fn_denorm_window  = visual_windowing_V2
-
+'''
 ###################################################################             Ours                                ###################################################################
 # CNN Based  ################################################
 # 1.
@@ -605,7 +608,7 @@ def test_FSGAN_Previous(model, data_loader, device, save_dir):
     print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(self.data_loader), 
                                                                                         pred_ssim_avg/len(self.data_loader), 
                                                                                         pred_rmse_avg/len(self.data_loader)))        
-
+'''
 
 
 
@@ -780,18 +783,21 @@ def test_CNN_Based_Previous(model, data_loader, device, save_dir):
         pred_rmse_avg += pred_result[2]
 
         # PNG Save clip for windowing visualize
-        input_n_20    = input_n_20.clip(min=0, max=80)
-        input_n_100   = input_n_100.clip(min=0, max=80)
-        pred_n_100    = pred_n_100.clip(min=0, max=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7] +'/gt_n_20_'   +batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '.png'),  input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7]+'/gt_n_100_'  +batch_data['path_n_100'][0].split('/')[-1].replace('.dcm', '.png'), input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7] +'/pred_n_100_'+batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
+        input_n_20    = input_n_20.clip(min=-160, max=240)
+        input_n_100   = input_n_100.clip(min=-160, max=240)
+        pred_n_100    = pred_n_100.clip(min=-160, max=240)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7] +'/gt_n_20_'   +batch_data['path_n_20'][0].split('/')[-1].replace('.IMA', '.png'),  input_n_20.squeeze(),  cmap="gray", vmin=-160, vmax=240)
+        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7]+'/gt_n_100_'  +batch_data['path_n_100'][0].split('/')[-1].replace('.IMA', '.png'), input_n_100.squeeze(), cmap="gray", vmin=-160, vmax=240)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7] +'/pred_n_100_'+batch_data['path_n_20'][0].split('/')[-1].replace('.IMA', '.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=-160, vmax=240)
 
     print('\n')
     print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
     print('\n')
     print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
 
+    with (save_dir + "/log.txt").open("a") as f:
+        f.write('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)) + "\n")
+        f.write('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))
 
 
 # GAN Based  ################################################
@@ -884,35 +890,40 @@ def test_WGAN_VGG_Previous(model, data_loader, device, save_dir):
     model.Discriminator.eval()
     # switch to evaluation mode
 
-    os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['dcm_low'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
-    os.makedirs(save_dir                           + batch_data['dcm_low'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
+    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
 
     iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10)    
     for batch_data in iterator:
-        input_low  = batch_data['low'].to(device)
-        input_high = batch_data['high'].to(device)
+        input_low  = batch_data['n_20'].to(device).float()
+        input_high = batch_data['n_100'].to(device).float()
         
         # Forward Generator
         pred_n_100 = model.Generator(input_low)
 
+        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+
         # PNG Save
-        input_low    = dicom_denormalize(fn_tonumpy(input_low)).clip(min=0, max=80)
-        input_high   = dicom_denormalize(fn_tonumpy(input_high)).clip(min=0, max=80)
-        pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80)
-        plt.imsave(save_dir+batch_data['dcm_low'][0].split('/')[7]  + '/gt_low_'     + batch_data['dcm_low'][0].split('/')[-1].replace('.dcm', '.png'),  input_low[0].squeeze(),   cmap="gray")
-        plt.imsave(save_dir+batch_data['dcm_high'][0].split('/')[7] + '/gt_high_'    + batch_data['dcm_high'][0].split('/')[-1].replace('.dcm', '.png'), input_high[0].squeeze(),  cmap="gray")
-        plt.imsave(save_dir+batch_data['dcm_low'][0].split('/')[7]  + '/pred_n_100_' + batch_data['dcm_low'][0].split('/')[-1].replace('.dcm', '.png'),  pred_n_100[0].squeeze(),  cmap="gray")   
+        input_low_png    = dicom_denormalize(fn_tonumpy(input_low)).clip(min=-160, max=240)
+        input_high_png   = dicom_denormalize(fn_tonumpy(input_high)).clip(min=-160, max=240)
+        pred_n_100_png   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=-160, max=240)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  + '/gt_low_'     + batch_data['path_n_20'][0].split('/')[-1].replace('.IMA', '.png'),  input_low_png[0].squeeze(),   cmap="gray")
+        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] + '/gt_high_'    + batch_data['path_n_100'][0].split('/')[-1].replace('.IMA', '.png'), input_high_png[0].squeeze(),  cmap="gray")
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  + '/pred_n_100_' + batch_data['path_n_20'][0].split('/')[-1].replace('.IMA', '.png'),  pred_n_100_png[0].squeeze(),  cmap="gray")   
 
         # DCM Save
         input_low_dcm    = dicom_denormalize(fn_tonumpy(input_low))
         input_high_dcm   = dicom_denormalize(fn_tonumpy(input_high))
         pred_n_100_dcm   = dicom_denormalize(fn_tonumpy(pred_n_100))       
-        save_dicom(batch_data['dcm_low'][0],  input_low_dcm,  save_dir.replace('/png/', '/dcm/')+batch_data['dcm_low'][0].split('/')[7]  + '/gt_low_'     + batch_data['dcm_low'][0].split('/')[-1])        
-        save_dicom(batch_data['dcm_high'][0], input_high_dcm, save_dir.replace('/png/', '/dcm/')+batch_data['dcm_high'][0].split('/')[7] + '/gt_high_'    + batch_data['dcm_high'][0].split('/')[-1])
-        save_dicom(batch_data['dcm_low'][0],  pred_n_100_dcm, save_dir.replace('/png/', '/dcm/')+batch_data['dcm_low'][0].split('/')[7]  + '/pred_n_100_' + batch_data['dcm_low'][0].split('/')[-1])        
+        save_dicom(batch_data['path_n_20'][0],  input_low_dcm,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/gt_low_'     + batch_data['path_n_20'][0].split('/')[-1])        
+        save_dicom(batch_data['path_n_100'][0], input_high_dcm, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/gt_high_'    + batch_data['path_n_100'][0].split('/')[-1])
+        save_dicom(batch_data['path_n_20'][0],  pred_n_100_dcm, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/pred_n_100_' + batch_data['path_n_20'][0].split('/')[-1])        
         
         # Metric
-        original_result, pred_result = compute_measure(input_low_dcm, input_high_dcm, pred_n_100_dcm, 4095)
+        # original_result, pred_result = compute_measure(input_low_dcm, input_high_dcm, pred_n_100_dcm, 4095.0)
+        original_result, pred_result = compute_measure(x=torch.tensor(input_low_dcm).squeeze(), y=torch.tensor(input_high_dcm).squeeze(), pred=torch.tensor(pred_n_100_dcm).squeeze(), data_range=4095.0)
+
         ori_psnr_avg += original_result[0]
         ori_ssim_avg += original_result[1]
         ori_rmse_avg += original_result[2]
@@ -921,15 +932,18 @@ def test_WGAN_VGG_Previous(model, data_loader, device, save_dir):
         pred_rmse_avg += pred_result[2]
 
     print('\n')
-    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(self.data_loader), 
-                                                                                    ori_ssim_avg/len(self.data_loader), 
-                                                                                    ori_rmse_avg/len(self.data_loader)))
+    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), 
+                                                                                    ori_ssim_avg/len(data_loader), 
+                                                                                    ori_rmse_avg/len(data_loader)))
     print('\n')
-    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(self.data_loader), 
-                                                                                        pred_ssim_avg/len(self.data_loader), 
-                                                                                        pred_rmse_avg/len(self.data_loader)))        
+    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), 
+                                                                                        pred_ssim_avg/len(data_loader), 
+                                                                                        pred_rmse_avg/len(data_loader)))        
+    with (save_dir + "/log.txt").open("a") as f:
+        f.write('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)) + "\n")
+        f.write('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))
 
-
+'''
 # 2.SACNN 
 def train_SACNN_Previous_3D(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training):
     model.Generator.train(True)
@@ -1518,4 +1532,4 @@ def test_SACNN_AE_Previous_3D(model, data_loader, device, save_dir):
         pred_n_100    = pred_n_100.clip(min=0, max=80)
         plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7]+'/gt_n_100_'  +batch_data['path_n_100'][0].split('/')[-1].replace('.dcm', '.png'), input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
         plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7] +'/pred_n_100_'+batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
-
+'''

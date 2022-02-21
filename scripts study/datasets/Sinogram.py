@@ -65,6 +65,119 @@ def default_collate_fn(batch):
 ######################################################                    Sinogram Task                             ########################################################
 from torchvision import transforms as vision_transforms
 
+######################################################                    Sinogram Task abdomen                     ########################################################
+def Mayo_Dataset_DCM(mode, patch_training, multiple_GT):
+
+    if mode == 'train':
+        #10patients, each img type have 2378 CT slices /workspace/Abdomen_CT/Data/Training_Image_Data/3mm B30
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Training_Image_Data/3mm_B30/quarter_3mm/*/*/*.IMA'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Training_Image_Data/3mm_B30/full_3mm/*/*/*.IMA'))  
+
+
+        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]            
+        print("Train [Total]  number = ", len(n_20_imgs))
+        # CT에 맞는 Augmentation
+        if patch_training:
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_100"]),                 
+
+                    # Crop  
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                    # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
+
+                    # (45 degree rotation, vertical & horizontal flip & scaling)
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    ToTensord(keys=["n_20", "n_100"]),
+                ]
+            )  
+            print("Train_Patched_Mayo_Dataset_DCM was created")
+        
+        else :
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_100"]),                 
+
+                    # (45 degree rotation, vertical & horizontal flip & scaling)
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    ToTensord(keys=["n_20", "n_100"]),
+                ]
+            )              
+            print("Train_Unpatched_Mayo_Dataset_DCM was created")
+
+
+    elif mode == 'valid':
+        # A patient L067's sample data to check
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Sample_Image_Data/*/quarter_3mm/*.IMA')) 
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Sample_Image_Data/*/full_3mm/*.IMA'))        
+
+        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]            
+        print("Valid [Total]  number = ", len(n_20_imgs))
+
+        # CT에 맞는 Augmentation
+        transforms = Compose(
+            [
+                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                AddChanneld(keys=["n_20", "n_100"]),         
+                ToTensord(keys=["n_20", "n_100"]),
+            ]
+        )    
+        print("Valid_Mayo_Dataset_DCM was created")
+    else :
+        print('Error...!')
+
+
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
+
+######################################################                 TEST   Sinogram Task                             ########################################################
+
+def TEST_Mayo_Dataset_DCM(mode, range_minus1_plus1):
+    if mode == 'sinogram':
+        # Abdomen, A patient L506's test data to check 
+        high_imgs = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Testing_Image_Data/3mm_B30/f/L506/full_3mm/*.IMA'))
+        low_imgs = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Testing_Image_Data/3mm_B30/q/L506/quarter_3mm/*.IMA'))
+        # brain
+        # high_imgs = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Testing_Image_Data/3mm_B30/CHO_HYE_F39/X/*/*/*.dcm'))
+        # low_imgs = list_sort_nicely(glob.glob('/workspace/Abdomen_CT/dataset/Testing_Image_Data/3mm_B30/CHO_HYE_F39/20/*/*/*.dcm'))
+
+        files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
+          
+        print("TEST [Total]  number = ", len(low_imgs))
+
+        if range_minus1_plus1:
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_100"]),                 
+                    ToTensord(keys=["n_20", "n_100"]),
+                    # Unet_with_perceptual Option
+                    Lambdad(keys=["n_20", "n_100"], func=vision_transforms.Normalize(mean=(0.5), std=(0.5))),
+                ]
+            )            
+        else:
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_100"]),                 
+                    ToTensord(keys=["n_20", "n_100"]),
+                ]
+            )        
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
+
+######################################################                    Sinogram Task brain                       ########################################################
 def Sinogram_Dataset_NPY(mode, patch_training, multiple_GT):
     if mode == 'train':
         n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Train/*/20/*/*/*.npy')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/20/*/*/*.npy'))

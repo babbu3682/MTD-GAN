@@ -1,9 +1,10 @@
 import os
 import sys
-sys.path.append(os.path.abspath('/workspace/sunggu'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/utils'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/module'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory/utils'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory/module'))
 
 import argparse
 import datetime
@@ -92,7 +93,7 @@ def main(args):
     data_loader                   = torch.utils.data.DataLoader(dataset_test, batch_size=1, num_workers=args.num_workers, shuffle=False, pin_memory=args.pin_mem, drop_last=False, collate_fn=collate_fn_test) #collate_fn_valid
 
     print(f"Creating model: {args.model_name}")
-    model = create_model(name=args.model_name, args=args)
+    model = create_model(name=args.model_name)
     model.load_state_dict(checkpoint['model_state_dict'])
 
     device = torch.device(args.device)

@@ -4,9 +4,8 @@ import torch.nn.functional as F
 import sys
 import os 
 
-sys.path.append(os.path.abspath('/workspace/sunggu'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/utils'))
-
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory/utils'))
 
 ######################################################################################################################################################################
 ######################################################                    Create Model                        ########################################################
@@ -19,7 +18,7 @@ from SACNN.model import SACNN, AutoEncoder_2D
 from WGAN_VGG.networks import WGAN_VGG
 from DUGAN.networks import DUGAN
 from MAP_NN.models import MAP_NN
-from TED_net.t2t_shortcuts import TED_Net, TED_Net_Mixed
+from TED_net.t2t_shortcuts import TED_Net#, TED_Net_Mixed
 from Restormer_module.Restormer import Restormer
 # Ours Works
 from Ours.MLPmixer import MLPMixer, Img2Img_Mixer, HF_ConvMixer
