@@ -218,8 +218,8 @@ class SACNN(nn.Module):
         real = y
 
         B, C, D, H, W = fake.shape
-        fake = fake.trasnpose(1, 2).reshape(B*D, C, H, W)
-        real = real.trasnpose(1, 2).reshape(B*D, C, H, W)
+        fake = fake.transpose(1, 2).reshape(B*D, C, H, W)
+        real = real.transpose(1, 2).reshape(B*D, C, H, W)
 
         fake_feature = self.AutoeEncoder.feat_extractor(fake)
         real_feature = self.AutoeEncoder.feat_extractor(real)
