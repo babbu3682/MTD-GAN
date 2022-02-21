@@ -473,10 +473,10 @@ def train_FSGAN_Previous(model, data_loader, optimizer_G, optimizer_Low_D, optim
         
             # Low
         low_gen_enc, low_gen_dec   = model.Low_discriminator(gen_full_dose)
-        low_gen_loss               = model.gan_metric(low_gen_enc, 1.) + model.gan_metric(low_gen_dec, 1.)
+        low_gen_loss               = model.gan_metric(low_gen_enc, torch.ones_like(low_gen_enc)) + model.gan_metric(low_gen_dec, torch.ones_like(low_gen_dec))
             # High
         high_gen_enc, high_gen_dec = model.High_discriminator(gen_full_dose)
-        high_gen_loss              = model.gan_metric(high_gen_enc, 1.) + model.gan_metric(high_gen_dec, 1.)
+        high_gen_loss              = model.gan_metric(high_gen_enc, torch.ones_like(high_gen_enc)) + model.gan_metric(high_gen_dec, torch.ones_like(high_gen_dec))
 
         adv_loss  = 0.1*low_gen_loss + 0.1*high_gen_loss 
         pix_loss  = 1.0*F.l1_loss(gen_full_dose, full_dose)         
