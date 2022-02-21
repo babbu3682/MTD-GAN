@@ -3,6 +3,8 @@ import torch
 import torch.nn.functional as F
 
 
+def ls_gan(inputs, targets):
+    return torch.mean((inputs - targets) ** 2)
 
 
 def double_conv(chan_in, chan_out):

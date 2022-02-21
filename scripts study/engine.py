@@ -490,10 +490,13 @@ def train_FSGAN_Previous(model, data_loader, optimizer_G, optimizer_Low_D, optim
 
         G_dict = {}
         G_dict.update({
-            'loss/low_gen_loss': low_gen_loss,
-            'loss/high_gen_loss': high_gen_loss,
-            'loss/pix_loss': pix_loss,
-            'loss/enc_loss': enc_loss,
+            'G_loss/low_loss': low_gen_loss,
+            'G_loss/high_loss': high_gen_loss,
+            'G_loss/pix_loss': pix_loss,
+            'G_loss/enc_loss': enc_loss,
+
+            'D_loss/low_loss': Low_D_loss.item(),    
+            'D_loss/high_loss': High_D_loss.item(),
         })
 
         metric_logger.update(**G_dict)
@@ -989,7 +992,7 @@ def valid_SACNN_Previous_3D(model, criterion, data_loader, device, epoch, save_d
         input_n_100  = batch_data['n_100'].to(device).float().permute(0,1,4,2,3)
                      
         # print(input_n_20.shape) # torch.Size([1, 1, 62, 512, 512])
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(3, 32, 32), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
 
         L1_loss = criterion(pred_n_100, input_n_100)
 
@@ -1038,7 +1041,7 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
         input_high = batch_data['high'].to(device)
         
         # Forward Generator
-        pred_n_100 = sliding_window_inference(inputs=input_low, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
+        pred_n_100 = sliding_window_inference(inputs=input_low, roi_size=(3, 32, 32), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
 
         # NII Save [C,H,W,[D]].
 

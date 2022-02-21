@@ -403,7 +403,6 @@ class ConvMixer_Generator(nn.Module):
         self.noise_embed = nn.Linear(64, 256*64*64)
 
         # convmixer block depth = 8
-        # self.mixer_block1 = nn.Sequential( Residual(SPADE_ConvMixer_Block(in_ch=dim//2, out_ch=dim//2, kernel_size=kernel_size, group=dim//2, padding="same")), SPADE_ConvMixer_Block(in_ch=dim//2, out_ch=dim//2, kernel_size=1) )
         self.mixer_block1 = SPADE_ConvMixer_Block(dim=dim, kernel_size=kernel_size)
         self.mixer_block2 = SPADE_ConvMixer_Block(dim=dim, kernel_size=kernel_size)
         self.mixer_block3 = SPADE_ConvMixer_Block(dim=dim, kernel_size=kernel_size)
@@ -486,7 +485,9 @@ class FSGAN(nn.Module):
         self.Low_discriminator  = Low_UNet(in_channels=2+1, repeat_num=6, use_discriminator=True, conv_dim=64, use_sigmoid=False)
         self.High_discriminator = High_UNet(in_channels=20+1, repeat_num=6, use_discriminator=True, conv_dim=64, use_sigmoid=False)
         
-        self.gan_metric         = ls_gan
+        # self.gan_metric         = ls_gan
+        self.gan_metric         = nn.BCEWithLogitsLoss()
+        
         self.KLDLoss            = KLDLoss()
 
     # ref : https://github.com/basiclab/gngan-pytorch
@@ -521,9 +522,12 @@ class FSGAN(nn.Module):
         low_fake_enc,   low_fake_dec     = self.normalize_gradient_enc_dec(self.Low_discriminator, gen_full_dose.detach())
         low_source_enc, low_source_dec   = self.normalize_gradient_enc_dec(self.Low_discriminator, low_dose)
 
-        disc_loss = self.gan_metric(low_real_enc, 1.) + self.gan_metric(low_real_dec, 1.) + \
-                    self.gan_metric(low_fake_enc, 0.) + self.gan_metric(low_fake_dec, 0.) + \
-                    self.gan_metric(low_source_enc, 0.) + self.gan_metric(low_source_dec, 0.)
+        # disc_loss = self.gan_metric(low_real_enc, 1.) + self.gan_metric(low_real_dec, 1.) + \
+        #             self.gan_metric(low_fake_enc, 0.) + self.gan_metric(low_fake_dec, 0.) + \
+        #             self.gan_metric(low_source_enc, 0.) + self.gan_metric(low_source_dec, 0.)
+        disc_loss = self.gan_metric(low_real_enc, torch.ones_like(low_real_enc)) + self.gan_metric(low_real_dec, torch.ones_like(low_real_dec)) + \
+                    self.gan_metric(low_fake_enc, torch.zeros_like(low_fake_enc)) + self.gan_metric(low_fake_dec, torch.zeros_like(low_fake_dec)) + \
+                    self.gan_metric(low_source_enc, torch.zeros_like(low_source_enc)) + self.gan_metric(low_source_dec, torch.zeros_like(low_source_dec))        
 
         return disc_loss
 
@@ -533,9 +537,9 @@ class FSGAN(nn.Module):
         high_fake_enc,   high_fake_dec    = self.normalize_gradient_enc_dec(self.High_discriminator, gen_full_dose.detach())
         high_source_enc, high_source_dec  = self.normalize_gradient_enc_dec(self.High_discriminator, low_dose)
 
-        disc_loss = self.gan_metric(high_real_enc, 1.) + self.gan_metric(high_real_dec, 1.) + \
-                    self.gan_metric(high_fake_enc, 0.) + self.gan_metric(high_fake_dec, 0.) + \
-                    self.gan_metric(high_source_enc, 0.) + self.gan_metric(high_source_dec, 0.)
+        disc_loss = self.gan_metric(high_real_enc, torch.ones_like(high_real_enc)) + self.gan_metric(high_real_dec, torch.ones_like(high_real_dec)) + \
+                    self.gan_metric(high_fake_enc, torch.zeros_like(high_fake_enc)) + self.gan_metric(high_fake_dec, torch.zeros_like(high_fake_dec)) + \
+                    self.gan_metric(high_source_enc, torch.zeros_like(high_source_enc)) + self.gan_metric(high_source_dec, torch.zeros_like(high_source_dec))
 
         return disc_loss
 

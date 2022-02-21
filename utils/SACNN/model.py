@@ -25,7 +25,7 @@ class SACNN_Generator(nn.Module):
         self.input_channels  = 1
         self.output_channels = 1
         
-        self.lay1 = Conv3D_Block(in_ch=self.input_channels, out_ch=64, use_bn="use_bn")  
+        self.lay1 = Conv3D_Block(in_ch=self.input_channels, out_ch=64, use_bn="instance")  
 
         self.lay2 = Conv3D_Block(in_ch=64, out_ch=32, use_bn="instance")
         self.lay3 = SA_Block(in_ch=32, out_ch=32)
@@ -36,7 +36,7 @@ class SACNN_Generator(nn.Module):
 
         self.lay8 = Conv3D_Block(in_ch=32, out_ch=64, use_bn="instance")
 
-        self.head = nn.Conv3d(in_channels=64, out_channels=1, kernel_size=(1, 1, 1))
+        self.head = nn.Conv3d(in_channels=64, out_channels=1, kernel_size=1)
 
 
     def forward(self, x):
@@ -130,7 +130,7 @@ class DISC(nn.Module):
         self.lay5 = Conv3D_Block(in_ch=128, out_ch=256, use_bn="instance")
         self.lay6 = Conv3D_Block(in_ch=256, out_ch=256, use_bn="instance")
 
-        self.fc1 = nn.Linear(256*3*64*64, 1024)    ## input:N*C*D*H*W = N*(256*3*64*64)
+        self.fc1 = nn.Linear(256*3*32*32, 1024)    ## input:N*C*D*H*W = N*(256*3*64*64)
         self.fc2 = nn.Linear(1024, 1)
 
     def forward(self, x):
@@ -140,7 +140,6 @@ class DISC(nn.Module):
         x = self.lay4(x)
         x = self.lay5(x)
         x = self.lay6(x)
-        x = self.lay7(x)
 
         x = x.view(x.size(0), -1)
         x = self.fc1(x)
@@ -170,7 +169,7 @@ class SACNN(nn.Module):
 
         # pre-trained feat extractor
         print("Load feature extractor...!")
-        checkpoint = torch.load("/workspace/sunggu/4.Dose_img2img/model/[Ours]Revised_UNet/.pth", map_location='cpu')
+        checkpoint = torch.load("/workspace/sunggu/4.Dose_img2img/model/[Privious]SACNN_AutoEncoder_NEW/epoch_998_checkpoint.pth", map_location='cpu')
         self.AutoeEncoder.load_state_dict(checkpoint['model_state_dict'])
         for p in self.AutoeEncoder.parameters():
             p.requires_grad = False
@@ -214,8 +213,14 @@ class SACNN(nn.Module):
         """
         percetual loss
         """
+
         fake = self.Generator(x)
         real = y
+
+        B, C, D, H, W = fake.shape
+        fake = fake.trasnpose(1, 2).reshape(B*D, C, H, W)
+        real = real.trasnpose(1, 2).reshape(B*D, C, H, W)
+
         fake_feature = self.AutoeEncoder.feat_extractor(fake)
         real_feature = self.AutoeEncoder.feat_extractor(real)
 

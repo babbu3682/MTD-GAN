@@ -297,7 +297,7 @@ def Sinogram_Dataset_NII(mode, patch_training, multiple_GT):
                     # RandSpatialCropd(keys=["image"], roi_size=(512, 512), random_size=False, random_center=True),
                     # RandSpatialCropd(keys=["image"], roi_size=(512,512,3), random_size=False, random_center=True),
 
-                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64, 3), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(32, 32, 3), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
                     # for SACNN num_samples down to 4....
                     # RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64, 3), num_samples=2, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
                         # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
