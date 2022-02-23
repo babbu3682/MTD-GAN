@@ -6,10 +6,12 @@ import random
 import os
 import sys
 from pathlib import Path
-sys.path.append(os.path.abspath('/workspace/sunggu'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/utils'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/module'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory/scripts study'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory/utils'))
+sys.path.append(os.path.abspath('/workspace/Abdomen_CT/scripts_study/LowDose_HighDose_Code_Factory/module'))
 
 import torch
 import numpy as np
@@ -29,7 +31,7 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('Sunggu Deeplearning Train and Test script', add_help=False)
+    parser = argparse.ArgumentParser('Deeplearning Train and Test script', add_help=False)
 
     # Dataset parameters
     parser.add_argument('--data-set', default='CIFAR10', type=str, help='dataset name')    
@@ -53,7 +55,7 @@ def get_args_parser():
     
     # Learning rate and schedule and Epoch parameters
     parser.add_argument('--epochs', default=1000, type=int)
-    parser.add_argument('--lr_scheduler', default='cosine_annealing_warm_restart', type=str, metavar='lr_scheduler', help='lr_scheduler (default: "cosine_annealing_warm_restart"')
+    parser.add_argument('--lr_scheduler', default='lambda', type=str, metavar='lr_scheduler', help='lr_scheduler (default: "cosine_annealing_warm_restart"')
     parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-4)')
 
     # Distributed or DataParrel or Single GPU train
@@ -116,7 +118,8 @@ def main(args):
         lr_scheduler_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_D, args=args)
         if args.resume:
             checkpoint = torch.load(args.resume, map_location='cpu')
-            if not args.from_pretrained:
+            # if not args.from_pretrained:
+            if args.from_pretrained:
                 optimizer_G.load_state_dict(checkpoint['optimizer_G'])
                 optimizer_D.load_state_dict(checkpoint['optimizer_D'])
                 lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])    
@@ -169,7 +172,8 @@ def main(args):
     if args.resume:
         print("Loading pre-trained Weight...!")
         model.load_state_dict(checkpoint['model_state_dict'])
-        if not args.from_pretrained:
+        # if not args.from_pretrained:
+        if args.from_pretrained:
             args.start_epoch = checkpoint['epoch'] + 1
             if 'best_metric' in checkpoint:
                 print("Epoch: ", checkpoint['epoch'], " Best Metric ==> ", checkpoint['best_metric'])
@@ -212,7 +216,8 @@ def main(args):
             # Previous        
         elif args.model_name == 'WGAN_VGG': 
             train_stats = train_WGAN_VGG_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training)            
-            valid_stats = valid_WGAN_VGG_Previous(model, criterion, data_loader_valid, device, epoch, args.save_dir)
+            if epoch % 25 == 0:
+                valid_stats = valid_WGAN_VGG_Previous(model, criterion, data_loader_valid, device, epoch, args.save_dir)
 
         elif args.model_name == 'MAP_NN': 
             train_stats = train_MAP_NN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training)            
@@ -251,7 +256,7 @@ def main(args):
             print(f'Best Epoch: {best_metric_epoch:.3f}')  
 
         # Save & Prediction png
-        if epoch % args.validate_every == 0:
+        if epoch % 10 == 0:
             save_name = 'epoch_' + str(epoch) + '_checkpoint.pth'
             checkpoint_paths = [output_dir / str(save_name)]
             for checkpoint_path in checkpoint_paths:
@@ -310,21 +315,19 @@ def main(args):
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
-        if args.model_name == 'MAP_NN' or args.model_name == 'SACNN':
-            lr_scheduler_G.step(epoch)
-            lr_scheduler_D.step(epoch)
-        elif args.model_name == 'WGAN_VGG':            
-            pass
+        if args.model_name == 'MAP_NN' or args.model_name == 'SACNN' or args.model_name == 'WGAN_VGG':
+            lr_scheduler_G.step()
+            lr_scheduler_D.step()
         elif args.model_name == 'DU_GAN':            
-            lr_scheduler_G.step(epoch)
-            lr_scheduler_Img_D.step(epoch)
-            lr_scheduler_Grad_D.step(epoch)
+            lr_scheduler_G.step()
+            lr_scheduler_Img_D.step()
+            lr_scheduler_Grad_D.step()
         elif args.model_name == 'FSGAN':            
-            lr_scheduler_G.step(epoch)
-            lr_scheduler_Low_D.step(epoch)
-            lr_scheduler_High_D.step(epoch)            
+            lr_scheduler_G.step()
+            lr_scheduler_Low_D.step()
+            lr_scheduler_High_D.step()            
         else:    
-            lr_scheduler.step(epoch)
+            lr_scheduler.step()
 
 
     # Finish

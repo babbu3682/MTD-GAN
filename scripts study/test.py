@@ -112,16 +112,19 @@ def main(args):
     # GAN based
         # Previous
     elif args.model_name == 'WGAN_VGG': 
-        test_WGAN_VGG_Previous(model, data_loader, device, args.save_dir)
+        # test_WGAN_VGG_Previous(model, data_loader, device, args.save_dir)
+        test_CNN_Based_Previous(model, data_loader, device, args.save_dir)
 
     elif args.model_name == 'MAP_NN': 
-        test_MAP_NN_Previous(model, data_loader, device, args.save_dir)
+        # test_MAP_NN_Previous(model, data_loader, device, args.save_dir)
+        test_CNN_Based_Previous(model, data_loader, device, args.save_dir)
 
     elif args.model_name == 'SACNN': 
         test_SACNN_Previous_3D(model, data_loader, device, args.save_dir)
 
     elif args.model_name == 'DU_GAN': 
-        test_DUGAN_Previous(model, data_loader, device, args.save_dir)
+        # test_DUGAN_Previous(model, data_loader, device, args.save_dir)
+        test_CNN_Based_Previous(model, data_loader, device, args.save_dir)
 
         # Ours
     elif args.model_name == 'FSGAN':         
