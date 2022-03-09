@@ -84,6 +84,9 @@ class WGAN_VGG(nn.Module):
         fake   = self.Generator(x)
         d_real = self.Discriminator(y)
         d_fake = self.Discriminator(fake)
+
+        print("check == ", y.shape, fake.shape)
+
         d_loss = -torch.mean(d_real) + torch.mean(d_fake)
         if gp:
             gp_loss = self.gp(y, fake)

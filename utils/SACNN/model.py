@@ -22,40 +22,43 @@ Generator
 class SACNN_Generator(nn.Module):
     def __init__(self):
         super(SACNN_Generator, self).__init__()
-        self.input_channels  = 1
-        self.output_channels = 1
+
+        self.lay1 = Conv3D_Block(in_ch=1, out_ch=64)
+
+        self.lay2 = Conv3D_Block(in_ch=64, out_ch=32)
+        self.att1 = SA_Block(in_ch=32)        
         
-        self.lay1 = Conv3D_Block(in_ch=self.input_channels, out_ch=64, use_bn="instance")  
+        self.lay4 = Conv3D_Block(in_ch=32, out_ch=16)
+        self.att2 = SA_Block(in_ch=16)        
+        
+        self.lay6 = Conv3D_Block(in_ch=16, out_ch=32)
+        self.att3 = SA_Block(in_ch=32)        
 
-        self.lay2 = Conv3D_Block(in_ch=64, out_ch=32, use_bn="instance")
-        self.lay3 = SA_Block(in_ch=32, out_ch=32)
-        self.lay4 = Conv3D_Block(in_ch=32, out_ch=16, use_bn="instance")
-        self.lay5 = SA_Block(in_ch=16, out_ch=16)
-        self.lay6 = Conv3D_Block(in_ch=16, out_ch=32, use_bn="instance")
-        self.lay7 = SA_Block(in_ch=32, out_ch=32)
+        self.lay8 = Conv3D_Block(in_ch=32, out_ch=64)
 
-        self.lay8 = Conv3D_Block(in_ch=32, out_ch=64, use_bn="instance")
+        self.head = nn.Conv3d(in_channels=64, out_channels=1, kernel_size=3, padding=(0,1,1))
 
-        self.head = nn.Conv3d(in_channels=64, out_channels=1, kernel_size=1)
-
+        
 
     def forward(self, x):
         # Conv3D input must be (B, C, D, H, W)
-
+        # print("c=== ", x.shape) # [2, 1, 3, 64, 64]
         x = self.lay1(x)
 
         x = self.lay2(x)
-        x = self.lay3(x)
+        x = self.att1(x)
 
         x = self.lay4(x)
-        x = self.lay5(x)
+        x = self.att2(x)
 
         x = self.lay6(x)
-        x = self.lay7(x)
+        x = self.att3(x)
 
         x = self.lay8(x)
 
         x = self.head(x)
+
+        x = x.squeeze(2)
 
         return F.relu(x)
 
@@ -117,21 +120,53 @@ class AutoEncoder_2D(nn.Module):
 Discriminator
 """
 ##******************************************************************************************************************************
+# class DISC(nn.Module):
+#     def __init__(self):
+#         super(DISC, self).__init__()
+
+#         self.lay1 = Conv3D_Block(in_ch=1, out_ch=64)
+#         self.lay2 = Conv3D_Block(in_ch=64, out_ch=64)
+
+#         self.lay3 = Conv3D_Block(in_ch=64, out_ch=128)
+#         self.lay4 = Conv3D_Block(in_ch=128, out_ch=128)
+
+#         self.lay5 = Conv3D_Block(in_ch=128, out_ch=256)
+#         self.lay6 = Conv3D_Block(in_ch=256, out_ch=256)
+
+#         self.fc1 = nn.Linear(256*3*64*64, 1024)    ## input:N*C*D*H*W = N*(256*3*64*64)
+#         self.fc2 = nn.Linear(1024, 1)
+
+#     def forward(self, x):
+#         x = self.lay1(x)
+#         x = self.lay2(x)
+#         x = self.lay3(x)
+#         x = self.lay4(x)
+#         x = self.lay5(x)
+#         x = self.lay6(x)
+
+#         x = x.view(x.size(0), -1)
+#         x = self.fc1(x)
+#         x = F.relu(x)
+#         x = self.fc2(x)
+
+#         return x
+
+
 class DISC(nn.Module):
     def __init__(self):
         super(DISC, self).__init__()
 
-        self.lay1 = Conv3D_Block(in_ch=1, out_ch=64,  use_bn="instance")
-        self.lay2 = Conv3D_Block(in_ch=64, out_ch=64, use_bn="instance")
+        self.lay1 = nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.lay2 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1)
 
-        self.lay3 = Conv3D_Block(in_ch=64, out_ch=128, use_bn="instance")
-        self.lay4 = Conv3D_Block(in_ch=128, out_ch=128, use_bn="instance")
+        self.lay3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1)
+        self.lay4 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1)
 
-        self.lay5 = Conv3D_Block(in_ch=128, out_ch=256, use_bn="instance")
-        self.lay6 = Conv3D_Block(in_ch=256, out_ch=256, use_bn="instance")
+        self.lay5 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1, padding=1)
+        self.lay6 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=1, padding=1)
 
-        self.fc1 = nn.Linear(256*3*32*32, 1024)    ## input:N*C*D*H*W = N*(256*3*64*64)
-        self.fc2 = nn.Linear(1024, 1)
+        self.fc1  = nn.Linear(256*1*64*64, 1024)    ## input:N*C*D*H*W = N*(256*3*64*64)
+        self.fc2  = nn.Linear(1024, 1)
 
     def forward(self, x):
         x = self.lay1(x)
@@ -147,7 +182,6 @@ class DISC(nn.Module):
         x = self.fc2(x)
 
         return x
-
 
 """
 Whole Network
@@ -182,8 +216,8 @@ class SACNN(nn.Module):
         fake   = self.Generator(x)
         d_real = self.Discriminator(y)
         d_fake = self.Discriminator(fake)
-
         d_loss = -torch.mean(d_real) + torch.mean(d_fake)
+
         if gp:
             gp_loss = self.gp(y, fake)
             loss = d_loss + gp_loss
@@ -200,7 +234,8 @@ class SACNN(nn.Module):
         d_fake = self.Discriminator(fake)
         g_loss = -torch.mean(d_fake)
         mse_loss = self.p_criterion(x, y)
-        g_loss += mse_loss*100
+        g_loss += mse_loss
+        
         if perceptual:
             p_loss = self.p_loss(x, y)
             loss = g_loss + (0.1 * p_loss)
@@ -217,9 +252,9 @@ class SACNN(nn.Module):
         fake = self.Generator(x)
         real = y
 
-        B, C, D, H, W = fake.shape
-        fake = fake.transpose(1, 2).reshape(B*D, C, H, W)
-        real = real.transpose(1, 2).reshape(B*D, C, H, W)
+        # B, C, D, H, W = fake.shape
+        # fake = fake.transpose(1, 2).reshape(B*D, C, H, W)
+        # real = real.transpose(1, 2).reshape(B*D, C, H, W)
 
         fake_feature = self.AutoeEncoder.feat_extractor(fake)
         real_feature = self.AutoeEncoder.feat_extractor(real)
@@ -232,8 +267,8 @@ class SACNN(nn.Module):
         gradient penalty
         """
         assert y.size() == fake.size()
-
-        a = torch.FloatTensor(np.random.random((y.size(0), 1, 1, 1, 1)))
+        # a = torch.FloatTensor(np.random.random((y.size(0), 1, 1, 1, 1)))
+        a = torch.FloatTensor(np.random.random((y.size(0), 1, 1, 1)))
         if torch.cuda.is_available():
             a = a.cuda()
 

@@ -4,16 +4,26 @@ from math import exp
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+from pytorch_ssim_3d import SSIM3D
+
+
 # Ref: https://github.com/SSinyu/WGAN-VGG/blob/d9af4a2cf6d1f4271546e0c01847bbc38d13b910/metric.py#L7
 
 def compute_measure(x, y, pred, data_range):
+    
     original_psnr = compute_PSNR(x, y, data_range)
     original_ssim = compute_SSIM(x, y, data_range)
     original_rmse = compute_RMSE(x, y)
-    pred_psnr = compute_PSNR(pred, y, data_range)
-    pred_ssim = compute_SSIM(pred, y, data_range)
-    pred_rmse = compute_RMSE(pred, y)
-    return (original_psnr, original_ssim, original_rmse), (pred_psnr, pred_ssim, pred_rmse)
+    
+    pred_psnr     = compute_PSNR(pred, y, data_range)
+    pred_ssim     = compute_SSIM(pred, y, data_range)
+    pred_rmse     = compute_RMSE(pred, y)
+
+    gt_psnr       = compute_PSNR(y, y, data_range)
+    gt_ssim       = compute_SSIM(y, y, data_range)
+    gt_rmse       = compute_RMSE(y, y)    
+
+    return (original_psnr, original_ssim, original_rmse), (pred_psnr, pred_ssim, pred_rmse), (gt_psnr, gt_ssim, gt_rmse)
 
 
 def compute_MSE(img1, img2):
@@ -74,3 +84,21 @@ def create_window(window_size, channel):
     _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
     window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
     return window
+
+
+def compute_measure_3D(x, y, pred, data_range):
+    ssim_loss = SSIM3D(window_size = 11)
+
+    original_psnr = compute_PSNR(x, y, data_range)
+    original_ssim = ssim_loss(x, y)
+    original_rmse = compute_RMSE(x, y)
+    
+    pred_psnr     = compute_PSNR(pred, y, data_range)
+    pred_ssim     = ssim_loss(pred, y)
+    pred_rmse     = compute_RMSE(pred, y)
+
+    gt_psnr       = compute_PSNR(y, y, data_range)
+    gt_ssim       = ssim_loss(y, y)
+    gt_rmse       = compute_RMSE(y, y)    
+
+    return (original_psnr, original_ssim, original_rmse), (pred_psnr, pred_ssim, pred_rmse), (gt_psnr, gt_ssim, gt_rmse)

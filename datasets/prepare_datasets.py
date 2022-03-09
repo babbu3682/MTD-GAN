@@ -12,9 +12,9 @@ def build_dataset(training_mode, args):
     elif args.data_set == 'TEST_Sinogram_OLD': 
         dataset, collate_fn = TEST_Sinogram_Dataset_OLD(mode=args.training_mode, range_minus1_plus1=args.range_minus1_plus1)
     elif args.data_set == 'TEST_Sinogram_DCM': 
-        dataset, collate_fn = TEST_Sinogram_Dataset_DCM(mode=args.training_mode, range_minus1_plus1=args.range_minus1_plus1)
+        dataset, collate_fn = TEST_Sinogram_Dataset_DCM()
     elif args.data_set == 'TEST_Sinogram_NII': 
-        dataset, collate_fn = TEST_Sinogram_Dataset_NII(mode=args.training_mode, range_minus1_plus1=args.range_minus1_plus1)
+        dataset, collate_fn = TEST_Sinogram_Dataset_NII()
 
     else: 
         raise Exception('Error...! args.data_set')

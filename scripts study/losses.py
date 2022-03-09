@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torchvision import models
 
 from torch.nn.modules.loss import _Loss
@@ -7,6 +8,199 @@ from module.loss import MS_SSIM_L1_LOSS
 
 # Vgg multiple loss Ref : https://github.com/NVIDIA/pix2pixHD/blob/5a2c87201c5957e2bf51d79b8acddb9cc1920b26/models/networks.py#L112
 # Resnet loss ref : https://github.com/workingcoder/EDCNN
+
+class HF_Conv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, dilation=1, groups=1, bias=True, requires_grad=True):
+        super(HF_Conv, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+
+        # In non-trainable case, it turns into normal Sobel operator with fixed weight and no bias.
+        self.bias = bias if requires_grad else False
+
+        if self.bias:
+            self.bias = nn.Parameter(torch.zeros(size=(out_channels,), dtype=torch.float32), requires_grad=True)
+        else:
+            self.bias = None
+
+        self.kernel_weight = nn.Parameter(torch.zeros(size=(out_channels, int(in_channels / groups), kernel_size, kernel_size)), requires_grad=False)
+
+        for idx in range(out_channels):
+            
+            # Sobel Filter
+            if idx == 0:
+                self.kernel_weight[idx, :, 0, :] = -1          
+                self.kernel_weight[idx, :, 0, 1] = -2
+                self.kernel_weight[idx, :, -1, :] = 1
+                self.kernel_weight[idx, :, -1, 1] = 2
+            elif idx == 1:
+                self.kernel_weight[idx, :, :, 0] = -1
+                self.kernel_weight[idx, :, 1, 0] = -2
+                self.kernel_weight[idx, :, :, -1] = 1
+                self.kernel_weight[idx, :, 1, -1] = 2
+            elif idx == 2:
+                self.kernel_weight[idx, :, 0, 0] = -2
+                self.kernel_weight[idx, :, 0, 1] = -1
+                self.kernel_weight[idx, :, 1, 0] = -1
+                self.kernel_weight[idx, :, 1, -1] = 1
+                self.kernel_weight[idx, :, -1, 1] = 1
+                self.kernel_weight[idx, :, -1, -1] = 2
+            elif idx == 3:
+                self.kernel_weight[idx, :, 0, 1] = 1
+                self.kernel_weight[idx, :, 0, -1] = 2
+                self.kernel_weight[idx, :, 1, 0] = -1
+                self.kernel_weight[idx, :, 1, -1] = 1
+                self.kernel_weight[idx, :, -1, 0] = -2
+                self.kernel_weight[idx, :, -1, 1] = -1
+
+            # High Frequency (Image - Blur)
+            elif idx == 4:
+                self.kernel_weight[idx, :, :, :] = -1/16
+                self.kernel_weight[idx, :, 1, :] = -2/16
+                self.kernel_weight[idx, :, :, 1] = -2/16
+                self.kernel_weight[idx, :, 1, 1] = 12/16      
+
+            # Laplacian or Unsharped mask filter or point edge filter
+            elif idx == 5:
+                self.kernel_weight[idx, :, 1, :] = -1           
+                self.kernel_weight[idx, :, :, 1] = -1
+                self.kernel_weight[idx, :, 1, 1] = 4
+            elif idx == 6:
+                self.kernel_weight[idx, :, :, :] = -1           
+                self.kernel_weight[idx, :, 1, 1] += 9   
+            elif idx == 7:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, 1, :] = -2
+                self.kernel_weight[idx, :, :, 1] = -2
+                self.kernel_weight[idx, :, 1, 1] = 4
+
+            # Compass Prewitt
+            elif idx == 8:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, 0, :] = -1
+                self.kernel_weight[idx, :, 1, 1] = -2
+            elif idx == 9:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, 0:2, 1:3] = -1
+                self.kernel_weight[idx, :, 1, 1] = -2
+            elif idx == 10:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, :, 2] = -1
+                self.kernel_weight[idx, :, 1, 1] = -2
+            elif idx == 11:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, 1:3, 1:3] = -1
+                self.kernel_weight[idx, :, 1, 1] = -2
+            elif idx == 12:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, 1, 1] = -2
+                self.kernel_weight[idx, :, 2, :] = -1    
+            elif idx == 13:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, 1:3, 0:2] = -1
+                self.kernel_weight[idx, :, 1, 1] = -2
+            elif idx == 14:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, :, 0] = -1
+                self.kernel_weight[idx, :, 1, 1] = -2
+            elif idx == 15:
+                self.kernel_weight[idx, :, :, :] = 1           
+                self.kernel_weight[idx, :, :2, :2] = -1
+                self.kernel_weight[idx, :, 1, 1] = -2
+
+            # Line filter
+            elif idx == 16:
+                self.kernel_weight[idx, :, :, :] = -1           
+                self.kernel_weight[idx, :, 1, :] = 2
+            elif idx == 17:
+                self.kernel_weight[idx, :, :, :] = -1           
+                self.kernel_weight[idx, :, :, 1] = 2
+            elif idx == 18:
+                self.kernel_weight[idx, :, :, :] = -1           
+                self.kernel_weight[idx, :, 0, 2] = 2
+                self.kernel_weight[idx, :, 1, 1] = 2
+                self.kernel_weight[idx, :, 2, 0] = 2
+            elif idx == 19:
+                self.kernel_weight[idx, :, :, :] = -1           
+                self.kernel_weight[idx, :, 0, 0] = 2
+                self.kernel_weight[idx, :, 1, 1] = 2
+                self.kernel_weight[idx, :, 2, 2] = 2
+                                             
+
+        # Define the trainable sobel factor
+        if requires_grad:
+            self.kernel_factor = nn.Parameter(torch.ones(size=(out_channels, 1, 1, 1), dtype=torch.float32), requires_grad=True)
+        else:
+            self.kernel_factor = nn.Parameter(torch.ones(size=(out_channels, 1, 1, 1), dtype=torch.float32), requires_grad=False)
+
+    def forward(self, x):
+        # if torch.cuda.is_available():
+        #     self.kernel_factor = self.kernel_factor.cuda()
+        #     if isinstance(self.bias, nn.Parameter):
+        #         self.bias = self.bias.cuda()
+
+        kernel_weight = self.kernel_weight * self.kernel_factor
+
+        # if torch.cuda.is_available():
+        #     kernel_weight = kernel_weight.cuda()
+
+        out = F.conv2d(x, kernel_weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+        # return torch.cat([out, x], dim=1)
+        return out
+
+class LF_Conv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, dilation=1, groups=1, bias=True, requires_grad=True):
+        super(LF_Conv, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+
+        # In non-trainable case, it turns into normal Sobel operator with fixed weight and no bias.
+        self.bias = bias if requires_grad else False
+
+        if self.bias:
+            self.bias = nn.Parameter(torch.zeros(size=(out_channels,), dtype=torch.float32), requires_grad=True)
+        else:
+            self.bias = None
+
+        self.kernel_weight = nn.Parameter(torch.zeros(size=(out_channels, int(in_channels / groups), kernel_size, kernel_size)), requires_grad=False)
+
+        for idx in range(out_channels):
+            
+            # Box Blur
+            if idx == 0:
+                self.kernel_weight[idx, :, :, :] = 1/9
+
+            # Gaussian Blur
+            elif idx == 1:
+                self.kernel_weight[idx, :, :, :] = 1/16
+                self.kernel_weight[idx, :, 1, :] = 2/16
+                self.kernel_weight[idx, :, :, 1] = 2/16
+                self.kernel_weight[idx, :, 1, 1] = 4/16      
+
+        # Define the trainable sobel factor
+        if requires_grad:
+            self.kernel_factor = nn.Parameter(torch.ones(size=(out_channels, 1, 1, 1), dtype=torch.float32), requires_grad=True)
+        else:
+            self.kernel_factor = nn.Parameter(torch.ones(size=(out_channels, 1, 1, 1), dtype=torch.float32), requires_grad=False)
+
+    def forward(self, x):
+        kernel_weight = self.kernel_weight * self.kernel_factor
+        out = F.conv2d(x, kernel_weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+        return torch.cat([out, x], dim=1)
 
 class Vgg19(torch.nn.Module):
     def __init__(self, requires_grad=False):
@@ -178,6 +372,18 @@ class Window_Conv2D(nn.Module):
             x = self.act_layer(x)
         return x    
 
+class CharbonnierLoss(nn.Module):
+    """Charbonnier Loss (L1)"""
+
+    def __init__(self, eps=1e-3):
+        super(CharbonnierLoss, self).__init__()
+        self.eps = eps
+
+    def forward(self, x, y):
+        diff = x - y
+        # loss = torch.sum(torch.sqrt(diff * diff + self.eps))
+        loss = torch.mean(torch.sqrt((diff * diff) + (self.eps*self.eps)))
+        return loss
 
 ######################################################################################################################################################################
 ######################################################             LOSS           Class                      ########################################################
@@ -362,6 +568,24 @@ class Window_L1_Loss(torch.nn.Module):
 
         return window_loss + l1_loss
 
+class Charbonnier_HighFreq_Loss(nn.Module):
+    def __init__(self, eps=1e-3):
+        super(Charbonnier_HighFreq_Loss, self).__init__()
+        self.eps     = eps
+        self.HF_conv = HF_Conv(in_channels=1, out_channels=20, requires_grad=False).to('cuda')
+        self.L1      = torch.nn.L1Loss()
+
+    def forward(self, gt_100, pred_n_100):
+        # Charbonnier Loss
+        diff  = gt_100 - pred_n_100
+        loss1 = torch.mean(torch.sqrt((diff * diff) + (self.eps*self.eps)))
+
+        # High Freq Loss
+        loss2 = self.L1(self.HF_conv(gt_100), self.HF_conv(pred_n_100))
+
+        return loss1 + loss2*100.0, {'Charbonnier_Loss': loss1, 'HF_Loss': loss2}
+
+
 
 
 def create_criterion(name, mode):
@@ -392,6 +616,9 @@ def create_criterion(name, mode):
 
     elif name == 'Change L2 L1 Loss':  # L2 + ResNet50 loss + Window L2
         criterion = Change_L2_L1_Loss(change_epoch=10)
+
+    elif name == 'Charbonnier_HighFreq_Loss':  # L2 + ResNet50 loss + Window L2
+        criterion = Charbonnier_HighFreq_Loss()
 
     else: 
         raise Exception('Error...! name')

@@ -107,6 +107,12 @@ def main(args):
     model = create_model(name=args.model_name)
     print(model)
 
+    #### Multi-GPU
+    if args.multi_gpu_mode == 'DataParallel':
+        model = torch.nn.DataParallel(model)
+        model.to(device)
+    else :
+        model.to(device)
 
     #### Optimizer & LR Schedule
     if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'SACNN':
@@ -152,9 +158,9 @@ def main(args):
                 optimizer_G.load_state_dict(checkpoint['optimizer_G'])
                 optimizer_Low_D.load_state_dict(checkpoint['optimizer_Low_D'])
                 optimizer_High_D.load_state_dict(checkpoint['optimizer_High_D'])
-                lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])    
-                lr_scheduler_Low_D.load_state_dict(checkpoint['lr_scheduler_Low_D'])        
-                lr_scheduler_High_D.load_state_dict(checkpoint['lr_scheduler_High_D'])      
+                lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])
+                lr_scheduler_Low_D.load_state_dict(checkpoint['lr_scheduler_Low_D'])
+                lr_scheduler_High_D.load_state_dict(checkpoint['lr_scheduler_High_D'])
 
     else : 
         optimizer    = torch.optim.AdamW(params=model.parameters(), lr=args.lr)
@@ -174,15 +180,12 @@ def main(args):
             if 'best_metric' in checkpoint:
                 print("Epoch: ", checkpoint['epoch'], " Best Metric ==> ", checkpoint['best_metric'])
 
-
-    #### Multi-GPU
-    if args.multi_gpu_mode == 'DataParallel':
-        model = torch.nn.DataParallel(model)
-        model.to(device)
-    else :
-        model.to(device)
-
-
+    # #### Multi-GPU
+    # if args.multi_gpu_mode == 'DataParallel':
+    #     model = torch.nn.DataParallel(model)
+    #     model.to(device)
+    # else :
+    #     model.to(device)
 
     #### Etc traing setting
     output_dir = Path(args.output_dir)
@@ -200,13 +203,14 @@ def main(args):
             valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.save_dir, args.criterion)
 
             # Ours
-        # elif args.model_name == 'MAP_WCMT' or args.model_name == 'WU_CMT' or args.model_name == 'WCMT_2D' or args.model_name == 'CMT_Unet': 
-        #     train_stats = train_CNN_Based_Ours(model, criterion, data_loader_train, optimizer, device, epoch, args.patch_training, args.multiple_GT, args.criterion)
-        #     valid_stats = valid_CNN_Based_Ours(model, criterion, data_loader_valid, device, epoch, args.save_dir, args.criterion)
+        elif args.model_name == 'SPADE_UNet' or args.model_name == 'SPADE_UNet_Upgrade': 
+            train_stats = train_CNN_Based_Ours(model, criterion, data_loader_train, optimizer, device, epoch, args.patch_training, args.criterion)
+            valid_stats = valid_CNN_Based_Ours(model, criterion, data_loader_valid, device, epoch, args.save_dir, args.criterion)
 
         # elif args.model_name == 'UNet_Progressive': 
         #     train_stats = train_CNN_Based_Ours_Progress(model, criterion, data_loader_train, optimizer, device, epoch, args.patch_training)
         #     valid_stats = valid_CNN_Based_Ours_Progress(model, criterion, data_loader_valid, device, epoch, args.save_dir)
+
 
         # GAN based
             # Previous        

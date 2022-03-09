@@ -9,14 +9,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+# Reference : https://github.com/mmlipku/sacnn/blob/main/sacnn.py
 ## Self-Attention Block
 ##***********************************************************************************************************
 class SA_Block(nn.Module):
     """
     input:N*C*D*H*W
     """
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch):
         super().__init__()
         # self.N = N 
         # self.C = in_ch
@@ -24,53 +24,41 @@ class SA_Block(nn.Module):
         # self.H = 64
         # self.W = 64
         self.in_ch  = in_ch
-        self.out_ch = out_ch
-        self.gama = nn.Parameter(torch.tensor([0.0]))
 
-        self.conv3d_k3 = nn.Sequential(
-            nn.Conv3d(in_channels=self.in_ch, out_channels=self.out_ch, kernel_size=(3, 3, 3), padding=1),
-            nn.InstanceNorm3d(self.out_ch, affine=True),
-            nn.ReLU(inplace=True),
-        )
+        self.gamma = nn.Parameter(torch.zeros(1))
 
-        self.conv3d_k1_a = nn.Sequential(
-            nn.Conv3d(in_channels=self.in_ch, out_channels=self.out_ch, kernel_size=(1, 1, 1), padding=0),
-            nn.InstanceNorm3d(self.out_ch, affine=True),
-            nn.ReLU(inplace=True), 
-        )
+        self.conv3d_k1_a  = nn.Conv3d(in_channels=self.in_ch, out_channels=self.in_ch//8, kernel_size=1)           # key
+        self.conv3d_k1_b  = nn.Conv3d(in_channels=self.in_ch, out_channels=self.in_ch//8, kernel_size=1)           # quary
+        self.conv3d_k3    = nn.Conv3d(in_channels=self.in_ch, out_channels=self.in_ch, kernel_size=3, padding=1)   # value
 
-        self.conv3d_k1_b = nn.Sequential(
-            nn.Conv3d(in_channels=self.in_ch, out_channels=self.out_ch, kernel_size=(1, 1, 1), padding=0),
-            nn.InstanceNorm3d(self.out_ch, affine=True),
-            nn.ReLU(inplace=True), 
-        )
+        self.softmax  = nn.Softmax(dim=-1)
 
-    def Cal_P_att(cls, k_x, q_x, v_x):
-        B, C, D, H, W = k_x.shape
+    def Cal_P_att(self, k_x, q_x, v_x):
+        B, C, D, H, W = v_x.shape
 
-        k_x = k_x.reshape((B, C, D, 1, H*W)).transpose(3, 4)
-        q_x = q_x.reshape((B, C, D, 1, H*W))
-        v_x = v_x.reshape((B, C, D, 1, H*W))
+        k_x = k_x.reshape((B, -1, H*W)).transpose(1, 2)
+        q_x = q_x.reshape((B, -1, H*W))
 
-        cor = torch.matmul(k_x, q_x)         # B, C, D, s(H*W), H*W
-        cor = F.softmax(cor, dim=3)
+        cor = torch.bmm(k_x, q_x)    
+        cor = self.softmax(cor).transpose(1, 2)
 
-        Patt = torch.matmul(v_x, cor).reshape(B, C, D, H, W)
+        v_x = v_x.reshape((B, C*D, H*W))
+        Patt = torch.bmm(v_x, cor).reshape(B, C, D, H, W)
         return Patt
 
     def Cal_D_att(self, k_x, q_x, v_x):
-        B, C, D, H, W = k_x.shape
+        B, C, D, H, W = v_x.shape
         
         k_x = k_x.transpose(1, 2).reshape(B, D, -1)                   # (B, D,     C*H*W)
         q_x = q_x.transpose(1, 2).reshape(B, D, -1).transpose(1, 2)   # (B, C*H*W, D)
         
-        cor = torch.matmul(k_x, q_x)                               # (B, D,    D)
-        cor = F.softmax(cor, dim=1)                                # (B, s(D), D)
+        cor = torch.bmm(k_x, q_x)                                  # (B, D,    D)
+        cor = self.softmax(cor).transpose(1, 2)                    # (B, s(D), D)
 
         v_x = v_x.transpose(1, 2).reshape(B, D, -1).transpose(1, 2)   # v_x = (B, C*H*W, D)                
                                                                       # cor = (B, s(D),  D)                
 
-        D_att = torch.matmul(v_x, cor).transpose(1, 2)             # (B, D, C*H*W)
+        D_att = torch.bmm(v_x, cor).transpose(1, 2)             # (B, D, C*H*W)
 
         D_att = D_att.view(B, D, C, H, W).transpose(1, 2)          # (B, C, D, H, W)
 
@@ -86,7 +74,7 @@ class SA_Block(nn.Module):
         Patt = self.Cal_P_att(k_x, q_x, v_x)
         Datt = self.Cal_D_att(k_x, q_x, v_x)
 
-        Y = self.gama*(Patt + Datt) + x
+        Y = self.gamma*(Patt + Datt) + x
 
         return Y
 
@@ -97,24 +85,15 @@ class SA_Block(nn.Module):
 class Conv3D_Block(nn.Module):
     # input shape: N,C,D,H,W 
 
-    def __init__(self, in_ch, out_ch, use_bn="use_bn"):
+    def __init__(self, in_ch, out_ch):
         super().__init__()
         # Conv3d input:N*C*D*H*W
         # Conv3d output:N*C*D*H*W
 
-        if use_bn is "use_bn":
-            self.conv3d = nn.Sequential(
-                nn.Conv3d(in_channels=in_ch, out_channels=out_ch, kernel_size=(3, 3, 3), padding=1),
-                nn.BatchNorm3d(out_ch),
-                nn.ReLU(inplace=True),
-            )
-
-        else:
-            self.conv3d = nn.Sequential(
-                nn.Conv3d(in_channels=in_ch, out_channels=out_ch, kernel_size=(3, 3, 3), padding=1),
-                nn.InstanceNorm3d(out_ch, affine=True),
-                nn.ReLU(inplace=True),
-            )
+        self.conv3d = nn.Sequential(
+            nn.Conv3d(in_channels=in_ch, out_channels=out_ch, kernel_size=(3, 3, 3), padding=1),
+            nn.ReLU(inplace=True),
+        )
 
     def forward(self, x):
         out = self.conv3d(x)

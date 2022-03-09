@@ -50,15 +50,39 @@ def create_model(name):
     elif name == "SACNN":
         model = SACNN()
     elif name == "DU_GAN":
-        model = DUGAN()     
+        model = DUGAN()
 
     # Ours
-        ### Base
-    elif name == "FSGAN":
-        model = FSGAN()     
-        ### Ablation Version
+        ### CNN Base
+    elif name == "SPADE_UNet":
+        model = SPADE_UNet()
 
-                                                           
+    elif name == "SPADE_UNet_Upgrade":
+        model = SPADE_UNet_Upgrade()
+
+        ### GAN Base
+    # elif name == "FSGAN":
+    #     model = FSGAN(generator_type="ConvMixer")
+        
+        ## Ablation Version
+    # elif name == "FSGAN":
+    #     model = FSGAN(generator_type="Restormer")
+
+    elif name == "FSGAN":
+        model = FSGAN(generator_type="Restormer_Decoder")    
+
+    # elif name == "FSGAN":
+    #     model = FSGAN(generator_type="Uformer_Decoder")            
+
+    # 1. TEST Unet vs Unet GAN
+    # 2. TEST Restomer vs Unet 
+    # 3. TEST 해상도 유지 SPADE vs 업샘플 (Transformer_Generator vs Restormer_Decoder/Uformer_Decoder)        
+    elif name == "Revised_UNet":
+        model = Revised_UNet()
+
+    elif name == "Unet_GAN":
+        model = Unet_GAN()        
+
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('Number of Learnable Params:', n_parameters)   
 

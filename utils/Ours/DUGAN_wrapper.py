@@ -50,7 +50,7 @@ class UpBlock(nn.Module):
         sc = self.shortcut(x)
         return p + sc
 
-class UNet(nn.Module):
+class UNet_DUGAN(nn.Module):
     def __init__(self, repeat_num, use_tanh=False, use_sigmoid=False, skip_connection=True, use_discriminator=True, conv_dim=64, in_channels=1):
         super().__init__()
         self.use_tanh = use_tanh

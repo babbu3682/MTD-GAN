@@ -1,9 +1,9 @@
 import os
 import sys
 sys.path.append(os.path.abspath('/workspace/sunggu'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/utils'))
-sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/module'))
+sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory'))
+sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/utils'))
+sys.path.append(os.path.abspath('/workspace/sunggu/4.Dose_img2img/LowDose_HighDose_Code_Factory/module'))
 
 import argparse
 import datetime
@@ -34,12 +34,9 @@ def get_args_parser():
 
     # Model_name
     parser.add_argument('--model-name', default='Sequence_SkipHidden_Unet_loss', type=str, help='model name')      
-    parser.add_argument('--training-mode',  default='sinogram', type=str,  help='select sinogram or follow dataset')
-    parser.add_argument('--teacher_forcing', default="FALSE",   type=str2bool, help='teacher_forcing')    
     
     # Dataset parameters
     parser.add_argument('--data-set', default='TEST_Sinogram_DCM', type=str, help='dataset name')    
-    parser.add_argument('--range-minus1-plus1', type=str2bool, default="FALSE", help='range_minus1_plus1')
 
     # Continue Training
     parser.add_argument('--resume', default='', help='resume from checkpoint')
@@ -88,11 +85,11 @@ def main(args):
     print('Output To: ', save_dir)
 
     print("Loading dataset ....")
-    dataset_test, collate_fn_test = build_dataset(training_mode=args.training_mode, args=args)   
+    dataset_test, collate_fn_test = build_dataset(training_mode='test',  args=args)
     data_loader                   = torch.utils.data.DataLoader(dataset_test, batch_size=1, num_workers=args.num_workers, shuffle=False, pin_memory=args.pin_mem, drop_last=False, collate_fn=collate_fn_test) #collate_fn_valid
 
     print(f"Creating model: {args.model_name}")
-    model = create_model(name=args.model_name, args=args)
+    model = create_model(name=args.model_name)
     model.load_state_dict(checkpoint['model_state_dict'])
 
     device = torch.device(args.device)
@@ -105,8 +102,8 @@ def main(args):
         test_CNN_Based_Previous(model, data_loader, device, args.save_dir)
         
         # Ours
-    # elif args.model_name == '': 
-        # test_CNN_Based_Previous(model, data_loader, device, args.save_dir)
+    elif args.model_name == 'SPADE_UNet': 
+        test_CNN_Based_Ours(model, data_loader, device, args.save_dir)
 
     # GAN based
         # Previous
@@ -129,6 +126,18 @@ def main(args):
     # ETC
     elif args.model_name == 'SACNN_AutoEncoder': 
         test_SACNN_AE_Previous_3D(model, data_loader, device, args.save_dir)
+
+
+    # 1. TEST Unet vs Unet GAN
+    # 2. TEST Restomer vs Unet 
+    # 3. TEST 해상도 유지 SPADE vs 업샘플 (Transformer_Generator vs Restormer_Decoder/Uformer_Decoder)        
+    elif args.model_name == 'Revised_UNet': 
+        test_CNN_Based_Previous(model, data_loader, device, args.save_dir)     
+
+    elif args.model_name == 'Unet_GAN': 
+        test_Unet_GAN_Ours(model, data_loader, device, args.save_dir)        
+
+
 
     else :
         pass
