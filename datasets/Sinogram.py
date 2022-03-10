@@ -370,17 +370,24 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
 
         for scan_path, target_path in zip(n_20_imgs, n_100_imgs):
             input_list  = list_sort_nicely(glob.glob(scan_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
-            target_list = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+            gt_list     = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
             
-            assert len(input_list) == len(target_list)
+            assert len(input_list) == len(gt_list)
             
-            for i in range(0, len(input_list)//3):
+            # for i in range(0, len(input_list)//3):
 
-                first_list.append(input_list[i*3+0])
-                middle_list.append(input_list[i*3+1])
-                last_list.append(input_list[i*3+2])
-                target_list.append(target_list[i*3+1])    
-                
+            #     first_list.append(input_list[i*3+0])
+            #     middle_list.append(input_list[i*3+1])
+            #     last_list.append(input_list[i*3+2])
+            #     target_list.append(gt_list[i*3+1])
+
+            for i in range(len(input_list)):
+                if (i-1 != -1) and (i+1 != len(input_list)):
+                    first_list.append(input_list[i-1])
+                    middle_list.append(input_list[i])
+                    last_list.append(input_list[i+1])
+                    target_list.append(gt_list[i])  
+
         files = [{"n_20_f": n_20_f, "n_20_m": n_20_m, "n_20_l": n_20_l, "n_100": n_100} for n_20_f, n_20_m, n_20_l, n_100 in zip(first_list, middle_list, last_list, target_list)]            
         print("Train [Total]  number = ", len(n_20_imgs))
 
@@ -434,12 +441,19 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
             
             assert len(input_list) == len(target_list)
             
-            for i in range(0, len(input_list)//3):
+            # for i in range(0, len(input_list)//3):
 
-                first_list.append(input_list[i*3+0])
-                middle_list.append(input_list[i*3+1])
-                last_list.append(input_list[i*3+2])
-                target_list.append(target_list[i*3+1])  
+            #     first_list.append(input_list[i*3+0])
+            #     middle_list.append(input_list[i*3+1])
+            #     last_list.append(input_list[i*3+2])
+            #     target_list.append(target_list[i*3+1])
+
+            for i in range(len(input_list)):
+                if (i-1 != -1) and (i+1 != len(input_list)):
+                    first_list.append(input_list[i-1])
+                    middle_list.append(input_list[i])
+                    last_list.append(input_list[i+1])
+                    target_list.append(target_list[i])  
                 
 
         files = [{"n_20_f": n_20_f, "n_20_m": n_20_m, "n_20_l": n_20_l, "n_100": n_100} for n_20_f, n_20_m, n_20_l, n_100 in zip(first_list, middle_list, last_list, target_list)]            
@@ -606,16 +620,23 @@ def TEST_Sinogram_Dataset_DCM_SACNN():
 
     for scan_path, target_path in zip(low_imgs, high_imgs):
         input_list  = list_sort_nicely(glob.glob(scan_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
-        target_list = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+        gt_list     = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
         
-        assert len(input_list) == len(target_list)
+        assert len(input_list) == len(gt_list)
         
-        for i in range(0, len(input_list)//3):
+        # for i in range(0, len(input_list)//3):
 
-            first_list.append(input_list[i*3+0])
-            middle_list.append(input_list[i*3+1])
-            last_list.append(input_list[i*3+2])
-            target_list.append(target_list[i*3+1])  
+        #     first_list.append(input_list[i*3+0])
+        #     middle_list.append(input_list[i*3+1])
+        #     last_list.append(input_list[i*3+2])
+        #     target_list.append(gt_list[i*3+1])
+
+        for i in range(len(input_list)):
+            if (i-1 != -1) and (i+1 != len(input_list)):
+                first_list.append(input_list[i-1])
+                middle_list.append(input_list[i])
+                last_list.append(input_list[i+1])
+                target_list.append(gt_list[i])  
             
 
     files = [{"n_20_f": n_20_f, "n_20_m": n_20_m, "n_20_l": n_20_l, "n_100": n_100, "path_n_20":n_20_m, "path_n_100":n_100} for n_20_f, n_20_m, n_20_l, n_100 in zip(first_list, middle_list, last_list, target_list)]            
