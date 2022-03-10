@@ -134,7 +134,7 @@ def valid_CNN_Based_Ours(model, criterion, data_loader, device, epoch, save_dir,
                 pred_n_100 = model(input_n_20)
 
         else :
-            if model._get_name() == "SPADE_UNet" or model.module._get_name() == "SPADE_UNet_Upgrade":
+            if model._get_name() == "SPADE_UNet" or model._get_name() == "SPADE_UNet_Upgrade":
                 pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
             else:
                 pred_n_100 = model(input_n_20)
@@ -889,7 +889,7 @@ def valid_WGAN_VGG_Previous(model, criterion, data_loader, device, epoch, save_d
     print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
     
     plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
     plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -969,13 +969,17 @@ def train_SACNN_Previous_3D(model, data_loader, optimizer_G, optimizer_D, device
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         
         if patch_training: 
-            input_n_20  = torch.cat([ batch_data[i]['n_20']  for i in range(8) ]).float().permute(0,1,4,2,3).to(device)  # 8 is patch_nums
-            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).float().permute(0,1,4,2,3)[:,:,1,:,:].to(device)  # (8*batch, C(=1), 64, 64) or (8*batch, C(=1), D(=3), H(=64), W(=64))
-
+            f  = torch.cat([ batch_data[i]['n_20_f']  for i in range(8) ])  # 8 is patch_nums
+            m  = torch.cat([ batch_data[i]['n_20_m']  for i in range(8) ])  # 8 is patch_nums
+            l  = torch.cat([ batch_data[i]['n_20_l']  for i in range(8) ])  # 8 is patch_nums
+            input_n_20  = torch.stack([f, m, l], dim=2).to(device).float()
+            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).to(device).float()
         else :
-            input_n_20   = batch_data['n_20'].float().permute(0,1,4,2,3).to(device)
-            input_n_100  = batch_data['n_100'].float().permute(0,1,4,2,3)[:,:,1,:,:].to(device)
-
+            f  = batch_data['n_20_f']  # 8 is patch_nums
+            m  = batch_data['n_20_m']  # 8 is patch_nums
+            l  = batch_data['n_20_l']  # 8 is patch_nums
+            input_n_20  = torch.stack([f, m, l], dim=2).to(device).float()
+            input_n_100 = batch_data['n_100'].to(device).float()
 
         # Discriminator, 4 time more training than Generator
         optimizer_D.zero_grad()
@@ -1003,7 +1007,6 @@ def train_SACNN_Previous_3D(model, data_loader, optimizer_G, optimizer_D, device
 @torch.no_grad()
 def valid_SACNN_Previous_3D(model, criterion, data_loader, device, epoch, save_dir):
     model.Generator.eval()
-    model.Discriminator.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Valid: [epoch:{}]'.format(epoch)
     print_freq = 200    
@@ -1011,14 +1014,17 @@ def valid_SACNN_Previous_3D(model, criterion, data_loader, device, epoch, save_d
     os.makedirs(save_dir, mode=0o777, exist_ok=True)
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
-        input_n_20   = batch_data['n_20'].to(device).float().permute(0,1,4,2,3)
-        input_n_100  = batch_data['n_100'].to(device).float().permute(0,1,4,2,3)
+        # forward pass
+        f   = batch_data['n_20_f']
+        m   = batch_data['n_20_m']
+        l   = batch_data['n_20_l']
+
+        input_n_20   = torch.stack([f, m, l], dim=2).to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
                      
-
-        # zero        = torch.zeros((1,1,1,512,512), device='cuda')
-        # paded_input = torch.cat([zero, input_n_20, zero], dim=2)        
-
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
+        # Forward Generator
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, padding_mode='constant', overlap=0.25, mode='gaussian')
+        pred_n_100 = pred_n_100[:,:,1,:,:]
 
         L1_loss = criterion(pred_n_100, input_n_100)
 
@@ -1031,9 +1037,10 @@ def valid_SACNN_Previous_3D(model, criterion, data_loader, device, epoch, save_d
     print("Averaged stats:", metric_logger)
 
     # Denormalize
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20[:, :, 34, :, :])).clip(min=0, max=80)      # select depth 36 brain slice
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100[:, :, 34, :, :])).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100[:, :, 34, :, :])).clip(min=0, max=80) 
+    input_n_20   = input_n_20[:,:,1,:,:]
+    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
 
     # PNG Save
     print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
@@ -1041,7 +1048,6 @@ def valid_SACNN_Previous_3D(model, criterion, data_loader, device, epoch, save_d
     plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
     plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
     plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
@@ -1057,46 +1063,38 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
     pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
     gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
 
-    saver = SaveImage(output_dir=save_dir, output_ext=".nii.gz", resample=False, separate_folder=False)
-
     iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
     for batch_data in iterator:
         
         # forward pass
-        input_n_20   = batch_data['n_20'].to(device).float().permute(0,1,4,2,3)
-        input_n_100  = batch_data['n_100'].to(device).float().permute(0,1,4,2,3)
-        
-        os.makedirs(save_dir + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+        f   = batch_data['n_20_f']
+        m   = batch_data['n_20_m']
+        l   = batch_data['n_20_l']
 
-        # print("c1 == ",  input_n_20.shape) ([1, 1, 56, 512, 512])
-        # print("c2 == ",  input_n_100.shape)
-
-        # # pad_input
-        zero      = torch.zeros([1, 1, 1, 512, 512]).to(device)
-        pad_input = torch.cat([zero, input_n_20, zero], dim=2)
+        input_n_20   = torch.stack([f, m, l], dim=2).to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
+        # print("check1 == ", f.shape)   torch.Size([1, 1, 512, 512])
+        # print("check2 == ", input_n_20.shape) torch.Size([1, 1, 3, 512, 512])
 
         # Forward Generator
-        empty = torch.zeros_like(input_n_20).to(device)
-        for i in range(input_n_20.shape[2]):
-            input      = pad_input[:, :, i:i+3, :, :]
-            pred_n_100 = sliding_window_inference(inputs=input, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, padding_mode='constant', overlap=0.25, mode='gaussian')
-            empty[:,:,i,:,:] = pred_n_100[:,:,1,:,:]
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(3, 64, 64), sw_batch_size=1, predictor=model.Generator, padding_mode='constant', overlap=0.25, mode='gaussian')
+        pred_n_100 = pred_n_100[:,:,1,:,:]
 
-        pred_n_100 = empty
-        print("LAST pred_n_100 == ", pred_n_100.shape)
-
-        # NII Save [C,H,W,[D]].
-        input_low_dcm    = dicom_denormalize(fn_tonumpy3d(input_n_20))[0]
-        input_high_dcm   = dicom_denormalize(fn_tonumpy3d(input_n_100))[0]
-        pred_n_100_dcm   = dicom_denormalize(fn_tonumpy3d(pred_n_100))[0]      
+        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
         
-        saver(input_low_dcm,  {"filename_or_obj":save_dir.replace('/png/', '/nii/')+batch_data['path_n_20'][0].split('/')[7]  +'/'+ str(cnt) +'_gt_n_20.nii.gz'})        
-        saver(input_high_dcm, {"filename_or_obj":save_dir.replace('/png/', '/nii/')+batch_data['path_n_100'][0].split('/')[7] +'/'+ str(cnt) +'_gt_n_100.nii.gz'})        
-        saver(pred_n_100_dcm, {"filename_or_obj":save_dir.replace('/png/', '/nii/')+batch_data['path_n_20'][0].split('/')[7]  +'/'+ str(cnt) +'_pred_n_100.nii.gz'})        
-        cnt += 1
+        input_n_20    = input_n_20[:,:,1,:,:]
+        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
+        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
+        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
+        
+        # DCM Save
+        save_dicom(batch_data['path_n_20'][0],  input_n_20,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
+        save_dicom(batch_data['path_n_100'][0], input_n_100, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
+        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
+        
         # Metric
-        print("!!! == ", input_low_dcm.shape)
-        original_result, pred_result, gt_result = compute_measure_3D(x=torch.tensor(input_low_dcm).unsqueeze(0), y=torch.tensor(input_high_dcm).unsqueeze(0), pred=torch.tensor(pred_n_100_dcm).unsqueeze(0), data_range=4095.0)
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
         ori_psnr_avg  += original_result[0]
         ori_ssim_avg  += original_result[1]
         ori_rmse_avg  += original_result[2]
@@ -1107,6 +1105,13 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
         gt_ssim_avg   += gt_result[1]
         gt_rmse_avg   += gt_result[2]
 
+        # PNG Save clip for windowing visualize
+        input_n_20    = input_n_20.clip(min=0, max=80)
+        input_n_100   = input_n_100.clip(min=0, max=80)
+        pred_n_100    = pred_n_100.clip(min=0, max=80)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
 
     print('\n')
     print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
@@ -1114,7 +1119,6 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
     print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
     print('\n')
     print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
-
 
 
 # 3.DUGAN

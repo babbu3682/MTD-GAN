@@ -60,6 +60,11 @@ def create_model(name):
     elif name == "SPADE_UNet_Upgrade":
         model = SPADE_UNet_Upgrade()
 
+    elif name == "SPADE_UNet_Upgrade_2":
+        model = SPADE_UNet_Upgrade_2()
+
+    elif name == "SPADE_UNet_Upgrade_3":
+        model = SPADE_UNet_Upgrade_3()
         ### GAN Base
     # elif name == "FSGAN":
     #     model = FSGAN(generator_type="ConvMixer")

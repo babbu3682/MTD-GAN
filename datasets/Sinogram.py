@@ -53,8 +53,6 @@ def dicom_normalize(image, MIN_HU=-1024.0, MAX_HU=3072.0):   # I already check t
    # image = (image - 0.5) / 0.5                  # Range -1.0 ~ 1.0   @ We do not use -1~1 range becuase there is no Tanh act.
    return image
 
-
-
 ######################################################                    collate_fn            ########################################################
 def default_collate_fn(batch):
     batch = list(filter(lambda x: x is not None, batch))
@@ -360,6 +358,107 @@ def Sinogram_Dataset_NII(mode, patch_training, multiple_GT):
 
     return Dataset(data=files, transform=transforms), default_collate_fn
 
+def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
+    if mode == 'train':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/20/')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/20/'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/X/'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/X/'))
+
+        first_list  = []
+        middle_list = []
+        last_list   = []
+        target_list = []
+
+        for scan_path, target_path in zip(n_20_imgs, n_100_imgs):
+            input_list  = list_sort_nicely(glob.glob(scan_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+            target_list = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+            
+            assert len(input_list) == len(target_list)
+            
+            for i in range(0, len(input_list)//3):
+
+                first_list.append(input_list[i*3+0])
+                middle_list.append(input_list[i*3+1])
+                last_list.append(input_list[i*3+2])
+                target_list.append(target_list[i*3+1])    
+                
+        files = [{"n_20_f": n_20_f, "n_20_m": n_20_m, "n_20_l": n_20_l, "n_100": n_100} for n_20_f, n_20_m, n_20_l, n_100 in zip(first_list, middle_list, last_list, target_list)]            
+        print("Train [Total]  number = ", len(n_20_imgs))
+
+        # CT에 맞는 Augmentation
+        if patch_training:
+            transforms = Compose(
+                [  
+                    Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),    
+
+                    # Crop  
+                    RandSpatialCropSamplesd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                        # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
+
+                    # (45 degree rotation, vertical & horizontal flip & scaling)
+                    RandFlipd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
+                ]
+            )  
+
+        else :
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),                 
+
+                    # (45 degree rotation, vertical & horizontal flip & scaling)
+                    RandFlipd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
+                ]
+            )              
+
+    elif mode == 'valid':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/20/'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/X/'))        
+
+        first_list  = []
+        middle_list = []
+        last_list   = []
+        target_list = []
+
+        for scan_path, target_path in zip(n_20_imgs, n_100_imgs):
+            input_list  = list_sort_nicely(glob.glob(scan_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+            target_list = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+            
+            assert len(input_list) == len(target_list)
+            
+            for i in range(0, len(input_list)//3):
+
+                first_list.append(input_list[i*3+0])
+                middle_list.append(input_list[i*3+1])
+                last_list.append(input_list[i*3+2])
+                target_list.append(target_list[i*3+1])  
+                
+
+        files = [{"n_20_f": n_20_f, "n_20_m": n_20_m, "n_20_l": n_20_l, "n_100": n_100} for n_20_f, n_20_m, n_20_l, n_100 in zip(first_list, middle_list, last_list, target_list)]            
+        print("Valid [Total]  number = ", len(n_20_imgs))
+
+        # CT에 맞는 Augmentation
+        transforms = Compose(
+            [
+                Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=get_pixels_hu),
+                Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
+                AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),         
+                ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
+            ]
+        )    
+    
+    else :
+        print('Error...!')
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
 
 
 
@@ -489,5 +588,47 @@ def TEST_Sinogram_Dataset_NII(range_minus1_plus1=False):
         )    
 
 
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
+
+
+
+
+
+def TEST_Sinogram_Dataset_DCM_SACNN():
+    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/'))
+    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/'))
+
+    first_list  = []
+    middle_list = []
+    last_list   = []
+    target_list = []
+
+    for scan_path, target_path in zip(low_imgs, high_imgs):
+        input_list  = list_sort_nicely(glob.glob(scan_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+        target_list = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
+        
+        assert len(input_list) == len(target_list)
+        
+        for i in range(0, len(input_list)//3):
+
+            first_list.append(input_list[i*3+0])
+            middle_list.append(input_list[i*3+1])
+            last_list.append(input_list[i*3+2])
+            target_list.append(target_list[i*3+1])  
+            
+
+    files = [{"n_20_f": n_20_f, "n_20_m": n_20_m, "n_20_l": n_20_l, "n_100": n_100, "path_n_20":n_20_m, "path_n_100":n_100} for n_20_f, n_20_m, n_20_l, n_100 in zip(first_list, middle_list, last_list, target_list)]            
+    print("Valid [Total]  number = ", len(low_imgs))
+
+    # CT에 맞는 Augmentation
+    transforms = Compose(
+        [
+            Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=get_pixels_hu),
+            Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
+            AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),         
+            ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
+        ]
+    )        
 
     return Dataset(data=files, transform=transforms), default_collate_fn

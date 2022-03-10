@@ -583,7 +583,7 @@ class Charbonnier_HighFreq_Loss(nn.Module):
         # High Freq Loss
         loss2 = self.L1(self.HF_conv(gt_100), self.HF_conv(pred_n_100))
 
-        return loss1 + loss2*100.0, {'Charbonnier_Loss': loss1, 'HF_Loss': loss2}
+        return loss1 + loss2*10.0, {'Charbonnier_Loss': loss1, 'HF_Loss': loss2}
 
 
 

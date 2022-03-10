@@ -1230,7 +1230,7 @@ class SPADE_UNet(nn.Module):
         return output
 
 
-# 2. Upgrade
+# 2. Upgrade # 20220309 수정 fft 빼보기
 class FourierLayer(nn.Module):
     def __init__(self, in_features, out_features, scale):
         super().__init__()
@@ -1260,12 +1260,13 @@ class SPADE_FF(nn.Module):
         nhidden = 128
         ks = 3
         pw = ks // 2
-        self.mlp_shared = nn.Sequential(nn.Conv2d(ff_nc*2, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+        # self.mlp_shared = nn.Sequential(nn.Conv2d(ff_nc*2, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+        self.mlp_shared = nn.Sequential(nn.Conv2d(1, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
         self.mlp_gamma  = nn.Conv2d(nhidden, norm_nc, kernel_size=ks, padding=pw)
         self.mlp_beta   = nn.Conv2d(nhidden, norm_nc, kernel_size=ks, padding=pw)
 
         # FF
-        self.ff_layer = FourierLayer(in_features=1, out_features=ff_nc, scale=10)        
+        # self.ff_layer = FourierLayer(in_features=1, out_features=ff_nc, scale=10)        
 
     def forward(self, x, segmap):
 
@@ -1276,14 +1277,14 @@ class SPADE_FF(nn.Module):
         segmap = F.interpolate(segmap, size=x.size()[2:], mode='bicubic')
         
         # FF
-        segmap = self.ff_layer(segmap)
+        # segmap = self.ff_layer(segmap)
 
         actv   = self.mlp_shared(segmap)
         gamma  = self.mlp_gamma(actv)
         beta   = self.mlp_beta(actv)
 
         # apply scale and bias
-        out = normalized * (1 + gamma) + beta
+        out = normalized*gamma + beta
 
         return out
 
@@ -1304,12 +1305,13 @@ class SPADE_FF_Half(nn.Module):
         nhidden = 128
         ks = 3
         pw = ks // 2
-        self.mlp_shared = nn.Sequential(nn.Conv2d(ff_nc*2, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+        # self.mlp_shared = nn.Sequential(nn.Conv2d(ff_nc*2, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+        self.mlp_shared = nn.Sequential(nn.Conv2d(1, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
         self.mlp_gamma  = nn.Conv2d(nhidden, norm_nc//2, kernel_size=ks, padding=pw)
         self.mlp_beta   = nn.Conv2d(nhidden, norm_nc//2, kernel_size=ks, padding=pw)
 
         # FF
-        self.ff_layer = FourierLayer(in_features=1, out_features=ff_nc, scale=10)        
+        # self.ff_layer = FourierLayer(in_features=1, out_features=ff_nc, scale=10)        
 
     def forward(self, x, segmap):
         
@@ -1322,7 +1324,7 @@ class SPADE_FF_Half(nn.Module):
         segmap = F.interpolate(segmap, size=x.size()[2:], mode='bicubic')
 
         # FF
-        segmap = self.ff_layer(segmap)
+        # segmap = self.ff_layer(segmap)
 
         actv   = self.mlp_shared(segmap)
         gamma  = self.mlp_gamma(actv)
@@ -1334,7 +1336,6 @@ class SPADE_FF_Half(nn.Module):
         out = torch.cat([x_norm, x_idt], dim=1)
 
         return out
-
 
 class SPADE_UNet_Upgrade(nn.Module):
     def __init__(self, input_nc=1, output_nc=1):
@@ -1480,7 +1481,358 @@ class SPADE_UNet_Upgrade(nn.Module):
 
         return output
 
+##### Upgrade 2
+class Residual_FF_Half(nn.Module):
+    def __init__(self, norm_nc):
+        super().__init__()
 
+        self.param_free_norm = nn.InstanceNorm2d(norm_nc//2, affine=True)
+
+    def forward(self, x):
+        
+        x_norm, x_idt = torch.chunk(x, 2, dim=1)
+        
+        x_norm = self.param_free_norm(x_norm)
+        
+        out = torch.cat([x_norm, x_idt], dim=1)
+
+        return out
+
+class SPADE_UNet_Upgrade_2(nn.Module):
+    def __init__(self, input_nc=1, output_nc=1):
+        super(SPADE_UNet_Upgrade_2, self).__init__()
+
+        def CBR2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
+            layers = []
+            layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)]
+            layers += [nn.ReLU()]
+
+            cbr = nn.Sequential(*layers)
+
+            return cbr
+
+        # Contracting path
+        self.enc1_1  = CBR2d(in_channels=input_nc, out_channels=64)
+        self.norm1_1 = Residual_FF_Half(norm_nc=64)
+        self.enc1_2  = CBR2d(in_channels=64, out_channels=64)
+        self.norm1_2 = Residual_FF_Half(norm_nc=64)
+
+        self.pool1 = Downsample_Unet(n_feat=64)
+
+        self.enc2_1  = CBR2d(in_channels=64, out_channels=128)
+        self.norm2_1 = Residual_FF_Half(norm_nc=128)
+        self.enc2_2  = CBR2d(in_channels=128, out_channels=128)
+        self.norm2_2 = Residual_FF_Half(norm_nc=128)
+
+        self.pool2 = Downsample_Unet(n_feat=128)
+
+        self.enc3_1  = CBR2d(in_channels=128, out_channels=256)
+        self.norm3_1 = Residual_FF_Half(norm_nc=256)
+        self.enc3_2  = CBR2d(in_channels=256, out_channels=256)
+        self.norm3_2 = Residual_FF_Half(norm_nc=256)
+
+        self.pool3 = Downsample_Unet(n_feat=256)
+
+        self.enc4_1  = CBR2d(in_channels=256, out_channels=512)
+        self.norm4_1 = Residual_FF_Half(norm_nc=512)
+        self.enc4_2  = CBR2d(in_channels=512, out_channels=512)
+        self.norm4_2 = Residual_FF_Half(norm_nc=512)
+
+        self.pool4 = Downsample_Unet(n_feat=512)
+
+        self.enc5_1  = CBR2d(in_channels=512, out_channels=1024)
+        self.norm5_1 = Residual_FF_Half(norm_nc=1024)
+        # Expansive path
+        self.dec5_1   = CBR2d(in_channels=1024, out_channels=512)
+        self.dnorm5_1 = SPADE_FF(norm_type='instance', norm_nc=512, ff_nc=64)
+
+        self.unpool4 = Upsample_Unet(n_feat=512)
+        
+        self.dec4_2   = CBR2d(in_channels=2 * 512, out_channels=512)
+        self.dnorm4_2 = SPADE_FF(norm_type='instance', norm_nc=512, ff_nc=64)
+        self.dec4_1   = CBR2d(in_channels=512, out_channels=256)
+        self.dnorm4_1 = SPADE_FF(norm_type='instance', norm_nc=256, ff_nc=64)
+
+        self.unpool3 = Upsample_Unet(n_feat=256)
+
+        self.dec3_2   = CBR2d(in_channels=2 * 256, out_channels=256)
+        self.dnorm3_2 = SPADE_FF(norm_type='instance', norm_nc=256, ff_nc=64)
+        self.dec3_1   = CBR2d(in_channels=256, out_channels=128)
+        self.dnorm3_1 = SPADE_FF(norm_type='instance', norm_nc=128, ff_nc=64)
+
+        self.unpool2 = Upsample_Unet(n_feat=128)
+
+        self.dec2_2   = CBR2d(in_channels=2 * 128, out_channels=128)
+        self.dnorm2_2 = SPADE_FF(norm_type='instance', norm_nc=128, ff_nc=64)
+        self.dec2_1   = CBR2d(in_channels=128, out_channels=64)
+        self.dnorm2_1 = SPADE_FF(norm_type='instance', norm_nc=64, ff_nc=64)
+
+        self.unpool1 = Upsample_Unet(n_feat=64)
+
+        self.dec1_2   = CBR2d(in_channels=2 * 64, out_channels=64)
+        self.dnorm1_2 = SPADE_FF(norm_type='instance', norm_nc=64, ff_nc=64)
+        self.dec1_1   = CBR2d(in_channels=64, out_channels=64)
+        self.dnorm1_1 = SPADE_FF(norm_type='instance', norm_nc=64, ff_nc=64)
+
+        self.fc   = nn.Conv2d(in_channels=64, out_channels=output_nc, kernel_size=1, stride=1, padding=0, bias=True)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        enc1_1 = self.enc1_1(x)
+        enc1_1 = self.norm1_1(enc1_1)
+        enc1_2 = self.enc1_2(enc1_1)
+        enc1_2 = self.norm1_2(enc1_2)
+        pool1 = self.pool1(enc1_2)
+
+        enc2_1 = self.enc2_1(pool1)
+        enc2_1 = self.norm2_1(enc2_1)
+        enc2_2 = self.enc2_2(enc2_1)
+        enc2_2 = self.norm2_2(enc2_2)
+        pool2 = self.pool2(enc2_2)
+
+        enc3_1 = self.enc3_1(pool2)
+        enc3_1 = self.norm3_1(enc3_1)
+        enc3_2 = self.enc3_2(enc3_1)
+        enc3_2 = self.norm3_2(enc3_2)
+        pool3 = self.pool3(enc3_2)
+
+        enc4_1 = self.enc4_1(pool3)
+        enc4_1 = self.norm4_1(enc4_1)
+        enc4_2 = self.enc4_2(enc4_1)
+        enc4_2 = self.norm4_2(enc4_2)
+        pool4 = self.pool4(enc4_2)
+
+        enc5_1 = self.enc5_1(pool4)
+        enc5_1 = self.norm5_1(enc5_1)
+        
+        dec5_1 = self.dec5_1(enc5_1)
+        dec5_1 = self.dnorm5_1(dec5_1, x)
+        
+        unpool4 = self.unpool4(dec5_1)
+        cat4 = torch.cat((unpool4, enc4_2), dim=1)
+        dec4_2 = self.dec4_2(cat4)
+        dec4_2 = self.dnorm4_2(dec4_2, x)
+        dec4_1 = self.dec4_1(dec4_2)
+        dec4_1 = self.dnorm4_1(dec4_1, x)
+        
+        unpool3 = self.unpool3(dec4_1)
+        cat3 = torch.cat((unpool3, enc3_2), dim=1)
+        dec3_2 = self.dec3_2(cat3)
+        dec3_2 = self.dnorm3_2(dec3_2, x)
+        dec3_1 = self.dec3_1(dec3_2)
+        dec3_1 = self.dnorm3_1(dec3_1, x)
+
+        unpool2 = self.unpool2(dec3_1)
+        cat2 = torch.cat((unpool2, enc2_2), dim=1)
+        dec2_2 = self.dec2_2(cat2)
+        dec2_2 = self.dnorm2_2(dec2_2, x)
+        dec2_1 = self.dec2_1(dec2_2)
+        dec2_1 = self.dnorm2_1(dec2_1, x)
+
+        unpool1 = self.unpool1(dec2_1)
+        cat1 = torch.cat((unpool1, enc1_2), dim=1)
+        dec1_2 = self.dec1_2(cat1)
+        dec1_2 = self.dnorm1_2(dec1_2, x)
+        dec1_1 = self.dec1_1(dec1_2)
+        dec1_1 = self.dnorm1_1(dec1_1, x)
+
+        output = self.fc(dec1_1)
+        # output = self.relu(output + x)
+        output = self.relu(output)
+
+        return output
+
+
+##### Upgrade 3
+
+class SPADE_FF(nn.Module):
+    def __init__(self, norm_type, norm_nc, ff_nc):
+        super().__init__()
+
+        if norm_type == 'instance':
+            self.param_free_norm = nn.InstanceNorm2d(norm_nc, affine=False)
+        elif norm_type == 'syncbatch':
+            self.param_free_norm = nn.SyncBatchNorm(norm_nc, affine=False)
+        elif norm_type == 'batch':
+            self.param_free_norm = nn.BatchNorm2d(norm_nc, affine=False)
+        else:
+            raise ValueError('%s is not a recognized param-free norm type in SPADE' %norm_type)
+
+        # The dimension of the intermediate embedding space. Yes, hardcoded.
+        nhidden = 128
+        ks = 3
+        pw = ks // 2
+        self.mlp_shared = nn.Sequential(nn.Conv2d(ff_nc*2, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+        self.mlp_gamma  = nn.Conv2d(nhidden, norm_nc, kernel_size=ks, padding=pw)
+        self.mlp_beta   = nn.Conv2d(nhidden, norm_nc, kernel_size=ks, padding=pw)
+
+        # FF
+        self.ff_layer = FourierLayer(in_features=1, out_features=ff_nc, scale=10)        
+
+    def forward(self, x, segmap):
+
+        # Part 1. generate parameter-free normalized activations
+        normalized = self.param_free_norm(x)
+
+        # Part 2. produce scaling and bias conditioned on semantic map
+        segmap = F.interpolate(segmap, size=x.size()[2:], mode='bicubic')
+        
+        # FF
+        segmap = self.ff_layer(segmap)
+
+        actv   = self.mlp_shared(segmap)
+        gamma  = self.mlp_gamma(actv)
+        beta   = self.mlp_beta(actv)
+
+        # apply scale and bias
+        out = normalized*gamma + beta
+
+        return out
+
+
+class SPADE_UNet_Upgrade_3(nn.Module):
+    def __init__(self, input_nc=1, output_nc=1):
+        super(SPADE_UNet_Upgrade_3, self).__init__()
+
+        def CBR2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
+            layers = []
+            layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)]
+            layers += [nn.ReLU()]
+
+            cbr = nn.Sequential(*layers)
+
+            return cbr
+
+        # Contracting path
+        self.enc1_1  = CBR2d(in_channels=input_nc, out_channels=64)
+        self.norm1_1 = Residual_FF_Half(norm_nc=64)
+        self.enc1_2  = CBR2d(in_channels=64, out_channels=64)
+        self.norm1_2 = Residual_FF_Half(norm_nc=64)
+
+        self.pool1 = Downsample_Unet(n_feat=64)
+
+        self.enc2_1  = CBR2d(in_channels=64, out_channels=128)
+        self.norm2_1 = Residual_FF_Half(norm_nc=128)
+        self.enc2_2  = CBR2d(in_channels=128, out_channels=128)
+        self.norm2_2 = Residual_FF_Half(norm_nc=128)
+
+        self.pool2 = Downsample_Unet(n_feat=128)
+
+        self.enc3_1  = CBR2d(in_channels=128, out_channels=256)
+        self.norm3_1 = Residual_FF_Half(norm_nc=256)
+        self.enc3_2  = CBR2d(in_channels=256, out_channels=256)
+        self.norm3_2 = Residual_FF_Half(norm_nc=256)
+
+        self.pool3 = Downsample_Unet(n_feat=256)
+
+        self.enc4_1  = CBR2d(in_channels=256, out_channels=512)
+        self.norm4_1 = Residual_FF_Half(norm_nc=512)
+        self.enc4_2  = CBR2d(in_channels=512, out_channels=512)
+        self.norm4_2 = Residual_FF_Half(norm_nc=512)
+
+        self.pool4 = Downsample_Unet(n_feat=512)
+
+        self.enc5_1  = CBR2d(in_channels=512, out_channels=1024)
+        self.norm5_1 = Residual_FF_Half(norm_nc=1024)
+        # Expansive path
+        self.dec5_1   = CBR2d(in_channels=1024, out_channels=512)
+        self.dnorm5_1 = SPADE_FF(norm_type='instance', norm_nc=512, ff_nc=64)
+
+        self.unpool4 = Upsample_Unet(n_feat=512)
+        
+        self.dec4_2   = CBR2d(in_channels=2 * 512, out_channels=512)
+        self.dnorm4_2 = SPADE_FF(norm_type='instance', norm_nc=512, ff_nc=64)
+        self.dec4_1   = CBR2d(in_channels=512, out_channels=256)
+        self.dnorm4_1 = SPADE_FF(norm_type='instance', norm_nc=256, ff_nc=64)
+
+        self.unpool3 = Upsample_Unet(n_feat=256)
+
+        self.dec3_2   = CBR2d(in_channels=2 * 256, out_channels=256)
+        self.dnorm3_2 = SPADE_FF(norm_type='instance', norm_nc=256, ff_nc=64)
+        self.dec3_1   = CBR2d(in_channels=256, out_channels=128)
+        self.dnorm3_1 = SPADE_FF(norm_type='instance', norm_nc=128, ff_nc=64)
+
+        self.unpool2 = Upsample_Unet(n_feat=128)
+
+        self.dec2_2   = CBR2d(in_channels=2 * 128, out_channels=128)
+        self.dnorm2_2 = SPADE_FF(norm_type='instance', norm_nc=128, ff_nc=64)
+        self.dec2_1   = CBR2d(in_channels=128, out_channels=64)
+        self.dnorm2_1 = SPADE_FF(norm_type='instance', norm_nc=64, ff_nc=64)
+
+        self.unpool1 = Upsample_Unet(n_feat=64)
+
+        self.dec1_2   = CBR2d(in_channels=2 * 64, out_channels=64)
+        self.dnorm1_2 = SPADE_FF(norm_type='instance', norm_nc=64, ff_nc=64)
+        self.dec1_1   = CBR2d(in_channels=64, out_channels=64)
+        self.dnorm1_1 = SPADE_FF(norm_type='instance', norm_nc=64, ff_nc=64)
+
+        self.fc   = nn.Conv2d(in_channels=64, out_channels=output_nc, kernel_size=1, stride=1, padding=0, bias=True)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        enc1_1 = self.enc1_1(x)
+        enc1_1 = self.norm1_1(enc1_1)
+        enc1_2 = self.enc1_2(enc1_1)
+        enc1_2 = self.norm1_2(enc1_2)
+        pool1 = self.pool1(enc1_2)
+
+        enc2_1 = self.enc2_1(pool1)
+        enc2_1 = self.norm2_1(enc2_1)
+        enc2_2 = self.enc2_2(enc2_1)
+        enc2_2 = self.norm2_2(enc2_2)
+        pool2 = self.pool2(enc2_2)
+
+        enc3_1 = self.enc3_1(pool2)
+        enc3_1 = self.norm3_1(enc3_1)
+        enc3_2 = self.enc3_2(enc3_1)
+        enc3_2 = self.norm3_2(enc3_2)
+        pool3 = self.pool3(enc3_2)
+
+        enc4_1 = self.enc4_1(pool3)
+        enc4_1 = self.norm4_1(enc4_1)
+        enc4_2 = self.enc4_2(enc4_1)
+        enc4_2 = self.norm4_2(enc4_2)
+        pool4 = self.pool4(enc4_2)
+
+        enc5_1 = self.enc5_1(pool4)
+        enc5_1 = self.norm5_1(enc5_1)
+        
+        dec5_1 = self.dec5_1(enc5_1)
+        dec5_1 = self.dnorm5_1(dec5_1, x)
+        
+        unpool4 = self.unpool4(dec5_1)
+        cat4 = torch.cat((unpool4, enc4_2), dim=1)
+        dec4_2 = self.dec4_2(cat4)
+        dec4_2 = self.dnorm4_2(dec4_2, x)
+        dec4_1 = self.dec4_1(dec4_2)
+        dec4_1 = self.dnorm4_1(dec4_1, x)
+        
+        unpool3 = self.unpool3(dec4_1)
+        cat3 = torch.cat((unpool3, enc3_2), dim=1)
+        dec3_2 = self.dec3_2(cat3)
+        dec3_2 = self.dnorm3_2(dec3_2, x)
+        dec3_1 = self.dec3_1(dec3_2)
+        dec3_1 = self.dnorm3_1(dec3_1, x)
+
+        unpool2 = self.unpool2(dec3_1)
+        cat2 = torch.cat((unpool2, enc2_2), dim=1)
+        dec2_2 = self.dec2_2(cat2)
+        dec2_2 = self.dnorm2_2(dec2_2, x)
+        dec2_1 = self.dec2_1(dec2_2)
+        dec2_1 = self.dnorm2_1(dec2_1, x)
+
+        unpool1 = self.unpool1(dec2_1)
+        cat1 = torch.cat((unpool1, enc1_2), dim=1)
+        dec1_2 = self.dec1_2(cat1)
+        dec1_2 = self.dnorm1_2(dec1_2, x)
+        dec1_1 = self.dec1_1(dec1_2)
+        dec1_1 = self.dnorm1_1(dec1_1, x)
+
+        output = self.fc(dec1_1)
+        # output = self.relu(output + x)
+        output = self.relu(output)
+
+        return output
 
 
 ############################################################################################################
