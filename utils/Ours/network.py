@@ -1644,7 +1644,6 @@ class SPADE_UNet_Upgrade_2(nn.Module):
 
 
 ##### Upgrade 3
-
 class SPADE_FF(nn.Module):
     def __init__(self, norm_type, norm_nc, ff_nc):
         super().__init__()
@@ -1688,7 +1687,6 @@ class SPADE_FF(nn.Module):
         out = normalized*gamma + beta
 
         return out
-
 
 class SPADE_UNet_Upgrade_3(nn.Module):
     def __init__(self, input_nc=1, output_nc=1):
@@ -1833,6 +1831,262 @@ class SPADE_UNet_Upgrade_3(nn.Module):
         output = self.relu(output)
 
         return output
+
+# 3. ResFFT_HFSPADE
+def distance(i, j, imageSize, r):
+        dis = torch.sqrt((i - imageSize/2) ** 2 + (j - imageSize/2) ** 2)
+        if dis < r:
+            return 1.0
+        else:
+            return 0
+        
+def mask_radial(image, R):
+    B, _, H, W = image.shape
+    mask       = torch.zeros_like(image)
+    
+    for b in range(B):
+        for i in range(H):
+            for j in range(W):
+                mask[b, 0, i, j] = distance(i, j, imageSize=H, r=R)
+
+    return mask
+
+def HighFreqLayer(image, R=20):
+
+    mask            = mask_radial(image, R) 
+    
+    img_fft         = torch.fft.fft2(image)
+    img_fft_center  = torch.fft.fftshift(img_fft)
+    
+    fd_high         = img_fft_center*(1-mask)
+    
+    img_high_center = torch.fft.ifftshift(fd_high)
+    img_high        = torch.fft.ifft2(img_high_center)
+
+    img_high        = torch.abs(img_high).float()
+    img_high        = torch.clip(img_high, 0.0, 1.0)
+    
+    return img_high
+
+
+class BasicConv(nn.Module):
+    def __init__(self, in_channel, out_channel, kernel_size, stride, bias=False, norm=None, relu=None, hf_channel=64):
+        super(BasicConv, self).__init__()
+        padding = kernel_size // 2
+        self.spade = False
+        self.conv = nn.Conv2d(in_channel, out_channel, kernel_size, padding=padding, stride=stride, bias=bias)
+
+        if norm == 'half':
+            self.norm = nn.InstanceNorm2d(out_channel//2, affine=True)
+            
+        elif norm == 'spade':
+            self.spade = True
+            self.norm  = nn.InstanceNorm2d(out_channel, affine=False)
+
+            # The dimension of the intermediate embedding space. Yes, hardcoded.
+            nhidden = 128
+            ks = 3
+            pw = ks // 2
+            self.mlp_shared = nn.Sequential(nn.Conv2d(hf_channel, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+            self.mlp_gamma  = nn.Conv2d(nhidden, out_channel, kernel_size=ks, padding=pw)
+            self.mlp_beta   = nn.Conv2d(nhidden, out_channel, kernel_size=ks, padding=pw)
+
+            # FF
+            self.hf_layer = HighFreqLayer(in_features=1, out_features=ff_nc, scale=10)           
+
+        else: 
+            self.norm = None
+
+        if relu == 'relu':
+            self.relu = nn.ReLU(inplace=True)
+        else :
+            self.relu = None
+
+    def forward(self, x, src=None):
+        x = self.conv(x)
+
+        if self.norm is not None:
+            x = self.norm(x)
+
+            if self.spade:
+                
+                segmap = F.interpolate(src, size=x.size()[2:], mode='bicubic')
+                
+                # high Freq
+                segmap = self.hf_layer(segmap)
+
+                actv   = self.mlp_shared(segmap)
+                gamma  = self.mlp_gamma(actv)
+                beta   = self.mlp_beta(actv)
+
+                # apply scale and bias
+                x = x*gamma + beta
+
+        if self.relu is not None:
+            x = self.relu(x)
+        
+        return x
+
+class E_ResBlock_FFT_block(nn.Module):
+    def __init__(self, in_channel, out_channel):
+        super(E_ResBlock_FFT_block, self).__init__()
+        self.main1 = BasicConv(in_channel,  out_channel, kernel_size=3, stride=1, norm='half', relu='relu')
+        self.main2 = BasicConv(out_channel, out_channel, kernel_size=3, stride=1, norm='none', relu='none')
+        
+        self.main_fft1 = BasicConv(in_channel*2,  out_channel*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = BasicConv(out_channel*2, out_channel*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+    def forward(self, x):
+        _, _, H, W = x.shape
+        y   = torch.fft.rfft2(x, norm='backward')
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))
+        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+        y   = torch.complex(y_real, y_imag)
+        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+
+        return self.main2(self.main1(x)) + x + y
+
+class D_ResBlock_FFT_block(nn.Module):
+    def __init__(self, in_channel, hidden_channel, out_channel):
+        super(D_ResBlock_FFT_block, self).__init__()
+        self.main1 = BasicConv(in_channel,  hidden_channel, kernel_size=3, stride=1, norm='spade', relu='relu')
+        self.main2 = BasicConv(hidden_channel, out_channel, kernel_size=3, stride=1, norm='spade', relu='none')
+        
+        self.main_fft1 = BasicConv(in_channel*2,  hidden_channel*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = BasicConv(hidden_channel*2, out_channel*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+    def forward(self, x, src):
+        _, _, H, W = x.shape
+        y   = torch.fft.rfft2(x, norm='backward')
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))
+        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+        y   = torch.complex(y_real, y_imag)
+        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+        return self.main2(self.main1(x, src), src) + x + y
+
+class B_ResBlock_FFT_block(nn.Module):
+    def __init__(self, in_channel, hidden_channel, out_channel):
+        super(B_ResBlock_FFT_block, self).__init__()
+        self.main1 = BasicConv(in_channel,  hidden_channel, kernel_size=3, stride=1, norm='half',  relu='relu')
+        self.main2 = BasicConv(hidden_channel, out_channel, kernel_size=3, stride=1, norm='spade', relu='none')
+        
+        self.main_fft1 = BasicConv(in_channel*2,  hidden_channel*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = BasicConv(hidden_channel*2, out_channel*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+    def forward(self, x, src):
+        _, _, H, W = x.shape
+        y   = torch.fft.rfft2(x, norm='backward')
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))
+        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+        y   = torch.complex(y_real, y_imag)
+        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+        return self.main2(self.main1(x), src) + x + y
+
+class ResFFT_HFSPADE(nn.Module):
+    def __init__(self, input_nc=1, output_nc=1):
+        super(ResFFT_HFSPADE, self).__init__()
+
+        # Contracting path
+        self.enc1  = E_ResBlock_FFT_block(in_channels=input_nc, out_channels=64)
+        self.pool1 = Downsample_Unet(n_feat=64)
+
+        self.enc2  = E_ResBlock_FFT_block(in_channels=64, out_channels=128)
+        self.pool2 = Downsample_Unet(n_feat=128)
+
+        self.enc3  = E_ResBlock_FFT_block(in_channels=128, out_channels=256)
+        self.pool3 = Downsample_Unet(n_feat=256)
+
+        self.enc4  = E_ResBlock_FFT_block(in_channels=256, out_channels=512)
+        self.pool4 = Downsample_Unet(n_feat=512)
+
+        self.bot   = B_ResBlock_FFT_block(in_channels=512, hidden_channel=1024, out_channels=512)
+
+        self.unpool4 = Upsample_Unet(n_feat=512)
+        self.dec4    = D_ResBlock_FFT_block(in_channels=2*512, hidden_channel=512, out_channels=256)
+
+        self.unpool3 = Upsample_Unet(n_feat=256)
+        self.dec3    = D_ResBlock_FFT_block(in_channels=2*256, hidden_channel=256, out_channels=128)
+                    
+        self.unpool2 = Upsample_Unet(n_feat=128)
+        self.dec2    = D_ResBlock_FFT_block(in_channels=2*128, hidden_channel=128, out_channels=64)
+        
+        self.unpool1 = Upsample_Unet(n_feat=64)
+        self.dec1    = D_ResBlock_FFT_block(in_channels=2*64, hidden_channel=64, out_channels=64)
+
+        self.fc   = nn.Conv2d(in_channels=64, out_channels=output_nc, kernel_size=1, stride=1, padding=0, bias=True)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        enc1_1 = self.enc1_1(x)
+        enc1_1 = self.norm1_1(enc1_1)
+        enc1_2 = self.enc1_2(enc1_1)
+        enc1_2 = self.norm1_2(enc1_2)
+        pool1 = self.pool1(enc1_2)
+
+        enc2_1 = self.enc2_1(pool1)
+        enc2_1 = self.norm2_1(enc2_1)
+        enc2_2 = self.enc2_2(enc2_1)
+        enc2_2 = self.norm2_2(enc2_2)
+        pool2 = self.pool2(enc2_2)
+
+        enc3_1 = self.enc3_1(pool2)
+        enc3_1 = self.norm3_1(enc3_1)
+        enc3_2 = self.enc3_2(enc3_1)
+        enc3_2 = self.norm3_2(enc3_2)
+        pool3 = self.pool3(enc3_2)
+
+        enc4_1 = self.enc4_1(pool3)
+        enc4_1 = self.norm4_1(enc4_1)
+        enc4_2 = self.enc4_2(enc4_1)
+        enc4_2 = self.norm4_2(enc4_2)
+        pool4 = self.pool4(enc4_2)
+
+        enc5_1 = self.enc5_1(pool4)
+        enc5_1 = self.norm5_1(enc5_1)
+        
+        dec5_1 = self.dec5_1(enc5_1)
+        dec5_1 = self.dnorm5_1(dec5_1, x)
+        
+        unpool4 = self.unpool4(dec5_1)
+        cat4 = torch.cat((unpool4, enc4_2), dim=1)
+        dec4_2 = self.dec4_2(cat4)
+        dec4_2 = self.dnorm4_2(dec4_2, x)
+        dec4_1 = self.dec4_1(dec4_2)
+        dec4_1 = self.dnorm4_1(dec4_1, x)
+        
+        unpool3 = self.unpool3(dec4_1)
+        cat3 = torch.cat((unpool3, enc3_2), dim=1)
+        dec3_2 = self.dec3_2(cat3)
+        dec3_2 = self.dnorm3_2(dec3_2, x)
+        dec3_1 = self.dec3_1(dec3_2)
+        dec3_1 = self.dnorm3_1(dec3_1, x)
+
+        unpool2 = self.unpool2(dec3_1)
+        cat2 = torch.cat((unpool2, enc2_2), dim=1)
+        dec2_2 = self.dec2_2(cat2)
+        dec2_2 = self.dnorm2_2(dec2_2, x)
+        dec2_1 = self.dec2_1(dec2_2)
+        dec2_1 = self.dnorm2_1(dec2_1, x)
+
+        unpool1 = self.unpool1(dec2_1)
+        cat1 = torch.cat((unpool1, enc1_2), dim=1)
+        dec1_2 = self.dec1_2(cat1)
+        dec1_2 = self.dnorm1_2(dec1_2, x)
+        dec1_1 = self.dec1_1(dec1_2)
+        dec1_1 = self.dnorm1_1(dec1_1, x)
+
+        output = self.fc(dec1_1)
+        # output = self.relu(output + x)
+        output = self.relu(output)
+
+        return output
+
 
 
 ############################################################################################################

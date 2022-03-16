@@ -102,7 +102,7 @@ def main(args):
         test_CNN_Based_Previous(model, data_loader, device, args.save_dir)
         
         # Ours
-    elif args.model_name == 'SPADE_UNet': 
+    elif args.model_name == 'SPADE_UNet' or args.model_name == 'SPADE_UNet_Upgrade_3': 
         test_CNN_Based_Ours(model, data_loader, device, args.save_dir)
 
     # GAN based
