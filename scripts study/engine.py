@@ -76,6 +76,16 @@ def train_CNN_Based_Ours(model, criterion, data_loader, optimizer, device, epoch
             input_n_20   = batch_data['n_20'].to(device).float()
             input_n_100  = batch_data['n_100'].to(device).float()
         
+
+        if model._get_name() == "ResFFT_Freq_SPADE_Att_window":
+            input_n_20  = input_n_20.clip(0.250,  0.270)
+            input_n_20 -= input_n_20.min()
+            input_n_20 /= input_n_20.max()
+
+            input_n_100 = input_n_100.clip(0.250,  0.270)
+            input_n_100 -= input_n_100.min()
+            input_n_100 /= input_n_100.max()
+
         pred_n_100 = model(input_n_20)
         # print("Check = ", pred_n_100[0].max(), pred_n_100[0].min(), pred_n_100[0].dtype, pred_n_100[0].shape)
         # print("Check = ", input_n_100.max(), input_n_100.min(), input_n_100.dtype, input_n_100.shape) # [32, 1, 64, 64]
@@ -93,6 +103,9 @@ def train_CNN_Based_Ours(model, criterion, data_loader, optimizer, device, epoch
 
         elif loss_name == 'Charbonnier_HighFreq_Loss':    
             loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)       
+
+        elif loss_name == 'Charbonnier_Edge_MSFR_Loss':    
+            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)                   
 
         loss_value = loss.item()
 
@@ -127,14 +140,23 @@ def valid_CNN_Based_Ours(model, criterion, data_loader, device, epoch, save_dir,
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
         
+        if model._get_name() == "ResFFT_Freq_SPADE_Att_window":
+            input_n_20  = input_n_20.clip(0.250,  0.270)
+            input_n_20 -= input_n_20.min()
+            input_n_20 /= input_n_20.max()
+
+            input_n_100 = input_n_100.clip(0.250,  0.270)
+            input_n_100 -= input_n_100.min()
+            input_n_100 /= input_n_100.max()
+
         if hasattr(model, 'module'):
-            if model.module._get_name() == "SPADE_UNet" or model.module._get_name() == "SPADE_UNet_Upgrade":
+            if model.module._get_name() == "SPADE_UNet" or model.module._get_name() == "SPADE_UNet_Upgrade" or model.module._get_name() == "ResFFT_LFSPADE" or model.module._get_name() == 'ResFFT_Freq_SPADE_Att' or model.module._get_name() == 'ResFFT_Freq_SPADE_Att_window':
                 pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module, overlap=0.5, mode='constant')
             else:
                 pred_n_100 = model(input_n_20)
 
         else :
-            if model._get_name() == "SPADE_UNet" or model._get_name() == "SPADE_UNet_Upgrade":
+            if model._get_name() == "SPADE_UNet" or model._get_name() == "SPADE_UNet_Upgrade" or model._get_name() == "ResFFT_LFSPADE" or model._get_name() == 'ResFFT_Freq_SPADE_Att' or model._get_name() == 'ResFFT_Freq_SPADE_Att_window':
                 pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
             else:
                 pred_n_100 = model(input_n_20)
@@ -155,6 +177,9 @@ def valid_CNN_Based_Ours(model, criterion, data_loader, device, epoch, save_dir,
         elif loss_name == 'Charbonnier_HighFreq_Loss':    
             loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100) 
 
+        elif loss_name == 'Charbonnier_Edge_MSFR_Loss':    
+            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100) 
+
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -168,15 +193,27 @@ def valid_CNN_Based_Ours(model, criterion, data_loader, device, epoch, save_dir,
     # Gather the stats from all processes
     print("Averaged stats:", metric_logger)
 
-    # PNG Save
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    if model._get_name() == "ResFFT_Freq_SPADE_Att_window":
+        # PNG Save
+        input_n_20   = fn_tonumpy(input_n_20)
+        input_n_100  = fn_tonumpy(input_n_100)
+        pred_n_100   = fn_tonumpy(pred_n_100)
 
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+        print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')    
+        plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+        plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray")
+        plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
+
+    else: 
+        # PNG Save
+        input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+        input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+        pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+
+        print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')    
+        plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 

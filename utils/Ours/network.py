@@ -1,5 +1,5 @@
 import math
-
+import numpy as np
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -1832,67 +1832,75 @@ class SPADE_UNet_Upgrade_3(nn.Module):
 
         return output
 
-# 3. ResFFT_HFSPADE
+# 3. ResFFT_LFSPADE
 def distance(i, j, imageSize, r):
-        dis = torch.sqrt((i - imageSize/2) ** 2 + (j - imageSize/2) ** 2)
+        dis = np.sqrt((i - imageSize/2) ** 2 + (j - imageSize/2) ** 2)
         if dis < r:
             return 1.0
         else:
             return 0
         
-def mask_radial(image, R):
-    B, _, H, W = image.shape
-    mask       = torch.zeros_like(image)
+def mask_radial(B, C, H, W):
+    mask  = torch.zeros(size=(B, C, H, W)).cuda()
     
     for b in range(B):
         for i in range(H):
             for j in range(W):
-                mask[b, 0, i, j] = distance(i, j, imageSize=H, r=R)
-
+                for c in range(C):
+                    mask[b, c, i, j] = distance(i, j, imageSize=H, r=2**c)
     return mask
 
-def HighFreqLayer(image, R=20):
+class LowFreqLayer(nn.Module):
+    def __init__(self, batch_size, freq_ch=8, height=64, width=64, requires_grad=True):
+        super(LowFreqLayer, self).__init__()
+        self.freq_ch   = freq_ch
+        self.freq_mask = nn.Parameter(mask_radial(B=batch_size, C=freq_ch, H=height, W=width), requires_grad=requires_grad)
+                                         
+    def forward(self, image):
+        low_list = []
+        for c in range(self.freq_ch):
+            
+            img_fft         = torch.fft.fft2(image)
+            img_fft_center  = torch.fft.fftshift(img_fft)
+            
+            if self.training:
+                fd_low          = torch.mul(img_fft_center, self.freq_mask[:, c, :, :].unsqueeze(1))
+            else :
+                fd_low          = torch.mul(img_fft_center, self.freq_mask[0, c, :, :].unsqueeze(0).unsqueeze(1))
 
-    mask            = mask_radial(image, R) 
-    
-    img_fft         = torch.fft.fft2(image)
-    img_fft_center  = torch.fft.fftshift(img_fft)
-    
-    fd_high         = img_fft_center*(1-mask)
-    
-    img_high_center = torch.fft.ifftshift(fd_high)
-    img_high        = torch.fft.ifft2(img_high_center)
+            img_low_center  = torch.fft.ifftshift(fd_low)
+            img_low         = torch.fft.ifft2(img_low_center)
 
-    img_high        = torch.abs(img_high).float()
-    img_high        = torch.clip(img_high, 0.0, 1.0)
+            img_low         = torch.abs(img_low).float()
+            img_low         = torch.clip(img_low, 0.0, 1.0)
+            
+            low_list.append(img_low)
     
-    return img_high
-
+        return torch.cat(low_list, dim=1)
 
 class BasicConv(nn.Module):
-    def __init__(self, in_channel, out_channel, kernel_size, stride, bias=False, norm=None, relu=None, hf_channel=64):
+    def __init__(self, in_channel, out_channel, kernel_size, stride, bias=False, norm=None, relu=None, lf_channel=8, feat_H=None, feat_W=None):
         super(BasicConv, self).__init__()
         padding = kernel_size // 2
-        self.spade = False
         self.conv = nn.Conv2d(in_channel, out_channel, kernel_size, padding=padding, stride=stride, bias=bias)
+        self.norm_type = norm
 
         if norm == 'half':
             self.norm = nn.InstanceNorm2d(out_channel//2, affine=True)
             
         elif norm == 'spade':
-            self.spade = True
+            # Low Freq
+            self.lf_layer = LowFreqLayer(batch_size=100*8, freq_ch=lf_channel, height=feat_H, width=feat_W, requires_grad=True)           
+            # self.lf_layer = LowFreqLayer(batch_size=100*8, freq_ch=lf_channel, height=feat_H, width=feat_W, requires_grad=False)           
+            
+            # Norm
             self.norm  = nn.InstanceNorm2d(out_channel, affine=False)
-
-            # The dimension of the intermediate embedding space. Yes, hardcoded.
             nhidden = 128
             ks = 3
             pw = ks // 2
-            self.mlp_shared = nn.Sequential(nn.Conv2d(hf_channel, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+            self.mlp_shared = nn.Sequential(nn.Conv2d(lf_channel, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
             self.mlp_gamma  = nn.Conv2d(nhidden, out_channel, kernel_size=ks, padding=pw)
             self.mlp_beta   = nn.Conv2d(nhidden, out_channel, kernel_size=ks, padding=pw)
-
-            # FF
-            self.hf_layer = HighFreqLayer(in_features=1, out_features=ff_nc, scale=10)           
 
         else: 
             self.norm = None
@@ -1906,14 +1914,17 @@ class BasicConv(nn.Module):
         x = self.conv(x)
 
         if self.norm is not None:
-            x = self.norm(x)
 
-            if self.spade:
-                
+            if self.norm_type == 'half':
+                x_norm, x_idt = torch.chunk(x, 2, dim=1)
+                x_norm        = self.norm(x_norm)
+                x             = torch.cat([x_norm, x_idt], dim=1)
+
+            elif self.norm_type == 'spade':
                 segmap = F.interpolate(src, size=x.size()[2:], mode='bicubic')
                 
                 # high Freq
-                segmap = self.hf_layer(segmap)
+                segmap = self.lf_layer(segmap)
 
                 actv   = self.mlp_shared(segmap)
                 gamma  = self.mlp_gamma(actv)
@@ -1921,6 +1932,9 @@ class BasicConv(nn.Module):
 
                 # apply scale and bias
                 x = x*gamma + beta
+            
+            else :
+                x = self.norm(x)
 
         if self.relu is not None:
             x = self.relu(x)
@@ -1928,16 +1942,21 @@ class BasicConv(nn.Module):
         return x
 
 class E_ResBlock_FFT_block(nn.Module):
-    def __init__(self, in_channel, out_channel):
+    def __init__(self, in_channels, out_channels):
         super(E_ResBlock_FFT_block, self).__init__()
-        self.main1 = BasicConv(in_channel,  out_channel, kernel_size=3, stride=1, norm='half', relu='relu')
-        self.main2 = BasicConv(out_channel, out_channel, kernel_size=3, stride=1, norm='none', relu='none')
+        self.conv  = BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+
+        self.main1 = BasicConv(out_channels, out_channels, kernel_size=3, stride=1, norm='half', relu='relu')
+        self.main2 = BasicConv(out_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
         
-        self.main_fft1 = BasicConv(in_channel*2,  out_channel*2, kernel_size=1, stride=1,  norm='none', relu='relu')
-        self.main_fft2 = BasicConv(out_channel*2, out_channel*2, kernel_size=1, stride=1,  norm='none', relu='none')
+        self.main_fft1 = BasicConv(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = BasicConv(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
 
     def forward(self, x):
         _, _, H, W = x.shape
+
+        x = self.conv(x)
+        
         y   = torch.fft.rfft2(x, norm='backward')
         y_f = torch.cat([y.real, y.imag], dim=1)
         y_f = self.main_fft2(self.main_fft1(y_f))
@@ -1949,16 +1968,20 @@ class E_ResBlock_FFT_block(nn.Module):
         return self.main2(self.main1(x)) + x + y
 
 class D_ResBlock_FFT_block(nn.Module):
-    def __init__(self, in_channel, hidden_channel, out_channel):
+    def __init__(self, in_channels, hidden_channels, out_channels, feat_H, feat_W):
         super(D_ResBlock_FFT_block, self).__init__()
-        self.main1 = BasicConv(in_channel,  hidden_channel, kernel_size=3, stride=1, norm='spade', relu='relu')
-        self.main2 = BasicConv(hidden_channel, out_channel, kernel_size=3, stride=1, norm='spade', relu='none')
+        self.conv  = BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
         
-        self.main_fft1 = BasicConv(in_channel*2,  hidden_channel*2, kernel_size=1, stride=1,  norm='none', relu='relu')
-        self.main_fft2 = BasicConv(hidden_channel*2, out_channel*2, kernel_size=1, stride=1,  norm='none', relu='none')
+        self.main1 = BasicConv(out_channels, hidden_channels, kernel_size=3, stride=1, norm='spade', relu='relu', feat_H=feat_H, feat_W=feat_W)
+        self.main2 = BasicConv(hidden_channels, out_channels, kernel_size=3, stride=1, norm='spade', relu='none', feat_H=feat_H, feat_W=feat_W)
+        
+        self.main_fft1 = BasicConv(out_channels*2, hidden_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = BasicConv(hidden_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
 
     def forward(self, x, src):
         _, _, H, W = x.shape
+        x = self.conv(x)
+
         y   = torch.fft.rfft2(x, norm='backward')
         y_f = torch.cat([y.real, y.imag], dim=1)
         y_f = self.main_fft2(self.main_fft1(y_f))
@@ -1969,16 +1992,20 @@ class D_ResBlock_FFT_block(nn.Module):
         return self.main2(self.main1(x, src), src) + x + y
 
 class B_ResBlock_FFT_block(nn.Module):
-    def __init__(self, in_channel, hidden_channel, out_channel):
+    def __init__(self, in_channels, hidden_channels, out_channels, feat_H, feat_W):
         super(B_ResBlock_FFT_block, self).__init__()
-        self.main1 = BasicConv(in_channel,  hidden_channel, kernel_size=3, stride=1, norm='half',  relu='relu')
-        self.main2 = BasicConv(hidden_channel, out_channel, kernel_size=3, stride=1, norm='spade', relu='none')
+        self.conv  = BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+
+        self.main1 = BasicConv(out_channels,  hidden_channels, kernel_size=3, stride=1, norm='half',  relu='relu')
+        self.main2 = BasicConv(hidden_channels,  out_channels, kernel_size=3, stride=1, norm='spade', relu='none', feat_H=feat_H, feat_W=feat_W)
         
-        self.main_fft1 = BasicConv(in_channel*2,  hidden_channel*2, kernel_size=1, stride=1,  norm='none', relu='relu')
-        self.main_fft2 = BasicConv(hidden_channel*2, out_channel*2, kernel_size=1, stride=1,  norm='none', relu='none')
+        self.main_fft1 = BasicConv(out_channels*2,  hidden_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = BasicConv(hidden_channels*2,  out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
 
     def forward(self, x, src):
         _, _, H, W = x.shape
+        x = self.conv(x)
+
         y   = torch.fft.rfft2(x, norm='backward')
         y_f = torch.cat([y.real, y.imag], dim=1)
         y_f = self.main_fft2(self.main_fft1(y_f))
@@ -1988,9 +2015,9 @@ class B_ResBlock_FFT_block(nn.Module):
         y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
         return self.main2(self.main1(x), src) + x + y
 
-class ResFFT_HFSPADE(nn.Module):
+class ResFFT_LFSPADE(nn.Module):
     def __init__(self, input_nc=1, output_nc=1):
-        super(ResFFT_HFSPADE, self).__init__()
+        super(ResFFT_LFSPADE, self).__init__()
 
         # Contracting path
         self.enc1  = E_ResBlock_FFT_block(in_channels=input_nc, out_channels=64)
@@ -2005,87 +2032,443 @@ class ResFFT_HFSPADE(nn.Module):
         self.enc4  = E_ResBlock_FFT_block(in_channels=256, out_channels=512)
         self.pool4 = Downsample_Unet(n_feat=512)
 
-        self.bot   = B_ResBlock_FFT_block(in_channels=512, hidden_channel=1024, out_channels=512)
+        self.bot   = B_ResBlock_FFT_block(in_channels=512, hidden_channels=1024, out_channels=512, feat_H=4, feat_W=4)
 
         self.unpool4 = Upsample_Unet(n_feat=512)
-        self.dec4    = D_ResBlock_FFT_block(in_channels=2*512, hidden_channel=512, out_channels=256)
+        self.dec4    = D_ResBlock_FFT_block(in_channels=2*512, hidden_channels=512, out_channels=256, feat_H=8, feat_W=8)
 
         self.unpool3 = Upsample_Unet(n_feat=256)
-        self.dec3    = D_ResBlock_FFT_block(in_channels=2*256, hidden_channel=256, out_channels=128)
+        self.dec3    = D_ResBlock_FFT_block(in_channels=2*256, hidden_channels=256, out_channels=128, feat_H=16, feat_W=16)
                     
         self.unpool2 = Upsample_Unet(n_feat=128)
-        self.dec2    = D_ResBlock_FFT_block(in_channels=2*128, hidden_channel=128, out_channels=64)
+        self.dec2    = D_ResBlock_FFT_block(in_channels=2*128, hidden_channels=128, out_channels=64, feat_H=32, feat_W=32)
         
         self.unpool1 = Upsample_Unet(n_feat=64)
-        self.dec1    = D_ResBlock_FFT_block(in_channels=2*64, hidden_channel=64, out_channels=64)
+        self.dec1    = D_ResBlock_FFT_block(in_channels=2*64, hidden_channels=64, out_channels=64, feat_H=64, feat_W=64)
 
         self.fc   = nn.Conv2d(in_channels=64, out_channels=output_nc, kernel_size=1, stride=1, padding=0, bias=True)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        enc1_1 = self.enc1_1(x)
-        enc1_1 = self.norm1_1(enc1_1)
-        enc1_2 = self.enc1_2(enc1_1)
-        enc1_2 = self.norm1_2(enc1_2)
-        pool1 = self.pool1(enc1_2)
+        enc1   = self.enc1(x)       # [80, 64, 64, 64]
+        pool1  = self.pool1(enc1)
 
-        enc2_1 = self.enc2_1(pool1)
-        enc2_1 = self.norm2_1(enc2_1)
-        enc2_2 = self.enc2_2(enc2_1)
-        enc2_2 = self.norm2_2(enc2_2)
-        pool2 = self.pool2(enc2_2)
+        enc2   = self.enc2(pool1)   # [80, 128, 32, 32]
+        pool2  = self.pool2(enc2)
 
-        enc3_1 = self.enc3_1(pool2)
-        enc3_1 = self.norm3_1(enc3_1)
-        enc3_2 = self.enc3_2(enc3_1)
-        enc3_2 = self.norm3_2(enc3_2)
-        pool3 = self.pool3(enc3_2)
+        enc3   = self.enc3(pool2)   # [80, 256, 16, 16]
+        pool3  = self.pool3(enc3)
 
-        enc4_1 = self.enc4_1(pool3)
-        enc4_1 = self.norm4_1(enc4_1)
-        enc4_2 = self.enc4_2(enc4_1)
-        enc4_2 = self.norm4_2(enc4_2)
-        pool4 = self.pool4(enc4_2)
+        enc4   = self.enc4(pool3)   # [80, 512, 8, 8]
+        pool4  = self.pool4(enc4)  
 
-        enc5_1 = self.enc5_1(pool4)
-        enc5_1 = self.norm5_1(enc5_1)
+        bot    = self.bot(pool4, x) 
         
-        dec5_1 = self.dec5_1(enc5_1)
-        dec5_1 = self.dnorm5_1(dec5_1, x)
-        
-        unpool4 = self.unpool4(dec5_1)
-        cat4 = torch.cat((unpool4, enc4_2), dim=1)
-        dec4_2 = self.dec4_2(cat4)
-        dec4_2 = self.dnorm4_2(dec4_2, x)
-        dec4_1 = self.dec4_1(dec4_2)
-        dec4_1 = self.dnorm4_1(dec4_1, x)
-        
-        unpool3 = self.unpool3(dec4_1)
-        cat3 = torch.cat((unpool3, enc3_2), dim=1)
-        dec3_2 = self.dec3_2(cat3)
-        dec3_2 = self.dnorm3_2(dec3_2, x)
-        dec3_1 = self.dec3_1(dec3_2)
-        dec3_1 = self.dnorm3_1(dec3_1, x)
+        unpool4 = self.unpool4(bot)
+        cat4 = torch.cat((unpool4, enc4), dim=1)
+        dec4 = self.dec4(cat4, x)
 
-        unpool2 = self.unpool2(dec3_1)
-        cat2 = torch.cat((unpool2, enc2_2), dim=1)
-        dec2_2 = self.dec2_2(cat2)
-        dec2_2 = self.dnorm2_2(dec2_2, x)
-        dec2_1 = self.dec2_1(dec2_2)
-        dec2_1 = self.dnorm2_1(dec2_1, x)
+        unpool3 = self.unpool3(dec4)
+        cat3 = torch.cat((unpool3, enc3), dim=1)
+        dec3 = self.dec3(cat3, x)
 
-        unpool1 = self.unpool1(dec2_1)
-        cat1 = torch.cat((unpool1, enc1_2), dim=1)
-        dec1_2 = self.dec1_2(cat1)
-        dec1_2 = self.dnorm1_2(dec1_2, x)
-        dec1_1 = self.dec1_1(dec1_2)
-        dec1_1 = self.dnorm1_1(dec1_1, x)
+        unpool2 = self.unpool2(dec3)
+        cat2 = torch.cat((unpool2, enc2), dim=1)
+        dec2 = self.dec2(cat2, x)
 
-        output = self.fc(dec1_1)
+        unpool1 = self.unpool1(dec2)
+        cat1 = torch.cat((unpool1, enc1), dim=1)
+        dec1 = self.dec1(cat1, x)
+
+        output = self.fc(dec1)
         # output = self.relu(output + x)
         output = self.relu(output)
 
         return output
+
+# 4. ResFFT_LFSPADE_Atten
+from functools import partial
+from einops import rearrange
+from torch import einsum
+
+def conv1x1(in_channels, out_channels, stride=1, groups=1):
+    return convnxn(in_channels, out_channels, kernel_size=1, stride=stride, groups=groups)
+
+def convnxn(in_channels, out_channels, kernel_size, stride=1, groups=1, padding=0):
+    return nn.Conv2d(in_channels, out_channels,
+                     kernel_size=kernel_size, stride=stride, padding=padding, groups=groups, bias=False)
+            
+class DropPath(nn.Module):
+
+    def __init__(self, p, **kwargs):
+        super().__init__()
+
+        self.p = p
+
+    def forward(self, x):
+        x = drop_path(x, self.p, self.training)
+
+        return x
+
+    def extra_repr(self):
+        return "p=%s" % repr(self.p)
+
+class Attention2d(nn.Module):
+
+    def __init__(self, dim_in, dim_out=None, *,
+                 heads=8, dim_head=64, dropout=0.0, k=1):
+        super().__init__()
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        inner_dim = dim_head * heads
+        dim_out   = dim_in if dim_out is None else dim_out
+
+        self.to_q  = nn.Conv2d(dim_in, inner_dim * 1, 1, bias=False)
+        self.to_kv = nn.Conv2d(dim_in, inner_dim * 2, k, stride=k, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Conv2d(inner_dim, dim_out, 1),
+            nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        )
+
+    def forward(self, x, mask=None):
+        b, n, _, y = x.shape
+        qkv = (self.to_q(x), *self.to_kv(x).chunk(2, dim=1))
+        q, k, v = map(lambda t: rearrange(t, 'b (h d) x y -> b h (x y) d', h=self.heads), qkv)
+
+        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+        dots = dots + mask if mask is not None else dots
+        attn = dots.softmax(dim=-1)
+
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+        out = rearrange(out, 'b h (x y) d -> b (h d) x y', y=y)
+
+        out = self.to_out(out)
+
+        return out, attn
+
+class LocalAttention(nn.Module):
+
+    def __init__(self, dim_in, dim_out=None, *,
+                 window_size=7, k=1,
+                 heads=8, dim_head=32, dropout=0.0):
+        super().__init__()
+        self.attn = Attention2d(dim_in, dim_out, heads=heads, dim_head=dim_head, dropout=dropout, k=k)
+        self.window_size = window_size
+
+        self.rel_index = self.rel_distance(window_size) + window_size - 1
+        self.pos_embedding = nn.Parameter(torch.randn(2 * window_size - 1, 2 * window_size - 1) * 0.02)
+
+    def forward(self, x, mask=None):
+        b, c, h, w = x.shape
+        p = self.window_size
+        n1 = h // p
+        n2 = w // p
+
+        mask = torch.zeros(p ** 2, p ** 2, device=x.device) if mask is None else mask
+        mask = mask + self.pos_embedding[self.rel_index[:, :, 0], self.rel_index[:, :, 1]]
+
+        x = rearrange(x, "b c (n1 p1) (n2 p2) -> (b n1 n2) c p1 p2", p1=p, p2=p)
+        x, attn_ = self.attn(x, mask)
+        x = rearrange(x, "(b n1 n2) c p1 p2 -> b c (n1 p1) (n2 p2)", n1=n1, n2=n2, p1=p, p2=p)
+
+        return x, attn_
+
+    @staticmethod
+    def rel_distance(window_size):
+        i = torch.tensor(np.array([[x, y] for x in range(window_size) for y in range(window_size)]))
+        d = i[None, :, :] - i[:, None, :]
+
+        return d
+
+class AttentionBlockA(nn.Module):
+    expansion = 4
+    def __init__(self, dim_in, dim_out=None,
+                 heads=8, dim_head=64, dropout=0.0, sd=0.0,
+                 stride=1, window_size=4, k=1, norm=nn.InstanceNorm2d, activation=nn.GELU):
+        super().__init__()
+        dim_out = dim_in if dim_out is None else dim_out
+        attn = partial(LocalAttention, window_size=window_size, k=k)
+        width = dim_in // self.expansion
+
+        self.shortcut = []
+        if dim_in != dim_out * self.expansion:
+            self.shortcut.append(conv1x1(dim_in, dim_out * self.expansion))
+            self.shortcut.append(norm(dim_out * self.expansion))
+        self.shortcut = nn.Sequential(*self.shortcut)
+
+        self.conv = nn.Sequential(
+            conv1x1(dim_in, width, stride=stride),
+            norm(width),
+            activation(),
+        )
+        self.attn = attn(width, dim_out * self.expansion, heads=heads, dim_head=dim_head, dropout=dropout)
+        self.norm = norm(dim_out * self.expansion)
+        self.sd = DropPath(sd) if sd > 0.0 else nn.Identity()
+
+    def forward(self, x):
+        skip = self.shortcut(x)
+        x = self.conv(x)
+        x, _ = self.attn(x)
+        x = self.norm(x)
+        x = self.sd(x) + skip
+
+        return x
+
+class FreqLayer(nn.Module):
+    def __init__(self, batch_size, freq_ch=8, height=64, width=64):
+        super(FreqLayer, self).__init__()
+        self.freq_ch   = freq_ch
+        self.freq_mask = mask_radial(B=batch_size, C=freq_ch, H=height, W=width)
+                                         
+    def forward(self, image):
+        low_list = []
+        for c in range(self.freq_ch):
+            
+            img_fft         = torch.fft.fft2(image)
+            img_fft_center  = torch.fft.fftshift(img_fft)
+            
+            if self.training:
+                fd_low      = torch.mul(img_fft_center, self.freq_mask[:, c, :, :].unsqueeze(1))
+            else :
+                fd_low      = torch.mul(img_fft_center, self.freq_mask[0, c, :, :].unsqueeze(0).unsqueeze(1))
+
+            img_low_center  = torch.fft.ifftshift(fd_low)
+            img_low         = torch.fft.ifft2(img_low_center)
+
+            img_low         = torch.abs(img_low).float()
+            img_low         = torch.clip(img_low, 0.0, 1.0)
+            
+            low_list.append(img_low)
+    
+        return torch.cat(low_list, dim=1)
+
+class Att_BasicConv(nn.Module):
+    def __init__(self, in_channel, out_channel, kernel_size, stride, bias=False, norm=None, relu=None, lf_channel=8, feat_H=None, feat_W=None):
+        super(Att_BasicConv, self).__init__()
+        padding = kernel_size // 2
+        self.conv = nn.Conv2d(in_channel, out_channel, kernel_size, padding=padding, stride=stride, bias=bias)
+        self.norm_type = norm
+
+        if norm == 'half':
+            self.norm = nn.InstanceNorm2d(out_channel//2, affine=True)
+            
+        elif norm == 'spade':
+            # Low Freq
+            self.lf_layer = FreqLayer(batch_size=50*8, freq_ch=lf_channel, height=feat_H, width=feat_W)           
+            
+            # Norm
+            self.norm  = nn.InstanceNorm2d(out_channel, affine=False)
+            nhidden = 128
+            ks = 3
+            pw = ks // 2
+            self.mlp_shared = nn.Sequential(nn.Conv2d(lf_channel, nhidden, kernel_size=ks, padding=pw), nn.ReLU())
+            self.mlp_gamma  = nn.Conv2d(nhidden, out_channel, kernel_size=ks, padding=pw)
+            self.mlp_beta   = nn.Conv2d(nhidden, out_channel, kernel_size=ks, padding=pw)
+
+        else: 
+            self.norm = None
+
+        if relu == 'relu':
+            self.relu = nn.ReLU(inplace=True)
+        else :
+            self.relu = None
+
+    def forward(self, x, src=None):
+        x = self.conv(x)
+
+        if self.norm is not None:
+
+            if self.norm_type == 'half':
+                x_norm, x_idt = torch.chunk(x, 2, dim=1)
+                x_norm        = self.norm(x_norm)
+                x             = torch.cat([x_norm, x_idt], dim=1)
+
+            elif self.norm_type == 'spade':
+                segmap = F.interpolate(src, size=x.size()[2:], mode='bicubic')
+                
+                # high Freq
+                segmap = self.lf_layer(segmap)
+
+                actv   = self.mlp_shared(segmap)
+                gamma  = self.mlp_gamma(actv)
+                beta   = self.mlp_beta(actv)
+
+                # apply scale and bias
+                x = x*gamma + beta
+            
+            else :
+                x = self.norm(x)
+
+        if self.relu is not None:
+            x = self.relu(x)
+        
+        return x
+
+class E_ResBlock_FFT_block_Att(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(E_ResBlock_FFT_block_Att, self).__init__()
+        self.conv  = Att_BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+
+        self.main1 = Att_BasicConv(out_channels, out_channels, kernel_size=3, stride=1, norm='half', relu='relu')
+        self.main2 = Att_BasicConv(out_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+        
+        self.main_fft1 = Att_BasicConv(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = Att_BasicConv(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+        self.conv1x1 = Att_BasicConv(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
+
+    def forward(self, x):
+        _, _, H, W = x.shape
+
+        x = self.conv(x)
+        
+        y   = torch.fft.rfft2(x, norm='backward')
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))
+        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+        y   = torch.complex(y_real, y_imag)
+        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+
+        mix = torch.cat([self.main2(self.main1(x)), x, y], dim=1)
+
+        return self.conv1x1(mix)
+
+class D_ResBlock_FFT_block_Att(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, feat_H, feat_W):
+        super(D_ResBlock_FFT_block_Att, self).__init__()
+        self.conv  = Att_BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+        
+        self.main1 = Att_BasicConv(out_channels, hidden_channels, kernel_size=3, stride=1, norm='spade', relu='relu', feat_H=feat_H, feat_W=feat_W)
+        self.main2 = Att_BasicConv(hidden_channels, out_channels, kernel_size=3, stride=1, norm='spade', relu='none', feat_H=feat_H, feat_W=feat_W)
+        
+        self.main_fft1 = Att_BasicConv(out_channels*2, hidden_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = Att_BasicConv(hidden_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+        self.conv1x1 = Att_BasicConv(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
+
+    def forward(self, x, src):
+        _, _, H, W = x.shape
+        x = self.conv(x)
+
+        y   = torch.fft.rfft2(x, norm='backward')
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))
+        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+        y   = torch.complex(y_real, y_imag)
+        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+
+        mix = torch.cat([self.main2(self.main1(x, src), src), x, y], dim=1)
+        
+        return self.conv1x1(mix)
+
+class B_ResBlock_FFT_block_Att(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, feat_H, feat_W):
+        super(B_ResBlock_FFT_block_Att, self).__init__()
+        self.conv  = Att_BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+
+        self.main1 = Att_BasicConv(out_channels,  hidden_channels, kernel_size=3, stride=1, norm='half',  relu='relu')
+        self.main2 = Att_BasicConv(hidden_channels,  out_channels, kernel_size=3, stride=1, norm='spade', relu='none', feat_H=feat_H, feat_W=feat_W)
+        
+        self.main_fft1 = Att_BasicConv(out_channels*2,  hidden_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.main_fft2 = Att_BasicConv(hidden_channels*2,  out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+        self.conv1x1 = Att_BasicConv(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
+
+    def forward(self, x, src):
+        _, _, H, W = x.shape
+        x = self.conv(x)
+
+        y   = torch.fft.rfft2(x, norm='backward')
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))
+        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+        y   = torch.complex(y_real, y_imag)
+        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+
+        mix = torch.cat([self.main2(self.main1(x), src), x, y], dim=1)
+        
+        return self.conv1x1(mix)
+
+class ResFFT_Freq_SPADE_Att(nn.Module):
+    def __init__(self, input_nc=1, output_nc=1):
+        super(ResFFT_Freq_SPADE_Att, self).__init__()
+
+        # Contracting path
+        self.enc1    = E_ResBlock_FFT_block_Att(in_channels=input_nc, out_channels=64)
+        self.pool1   = Downsample_Unet(n_feat=64)
+
+        self.enc2    = E_ResBlock_FFT_block_Att(in_channels=64, out_channels=128)
+        self.pool2   = Downsample_Unet(n_feat=128)
+
+        self.enc3    = E_ResBlock_FFT_block_Att(in_channels=128, out_channels=256)
+        self.pool3   = Downsample_Unet(n_feat=256)
+
+        self.enc4    = E_ResBlock_FFT_block_Att(in_channels=256, out_channels=512)
+        self.pool4   = Downsample_Unet(n_feat=512)
+        self.e_attn4 = AttentionBlockA(dim_in=512, dim_out=512//4, heads=8)
+
+        self.bot     = B_ResBlock_FFT_block_Att(in_channels=512, hidden_channels=1024, out_channels=512, feat_H=4, feat_W=4)
+        self.b_attn4 = AttentionBlockA(dim_in=512, dim_out=512//4, heads=8)
+
+        self.unpool4 = Upsample_Unet(n_feat=512)
+        self.dec4    = D_ResBlock_FFT_block_Att(in_channels=2*512, hidden_channels=512, out_channels=256, feat_H=8, feat_W=8)
+        self.d_attn4 = AttentionBlockA(dim_in=256, dim_out=256//4, heads=8)
+
+        self.unpool3 = Upsample_Unet(n_feat=256)
+        self.dec3    = D_ResBlock_FFT_block_Att(in_channels=2*256, hidden_channels=256, out_channels=128, feat_H=16, feat_W=16)
+                    
+        self.unpool2 = Upsample_Unet(n_feat=128)
+        self.dec2    = D_ResBlock_FFT_block_Att(in_channels=2*128, hidden_channels=128, out_channels=64, feat_H=32, feat_W=32)
+        
+        self.unpool1 = Upsample_Unet(n_feat=64)
+        self.dec1    = D_ResBlock_FFT_block_Att(in_channels=2*64, hidden_channels=64, out_channels=64, feat_H=64, feat_W=64)
+
+        self.fc   = nn.Conv2d(in_channels=64, out_channels=output_nc, kernel_size=1, stride=1, padding=0, bias=True)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        enc1   = self.enc1(x)       # [80, 64, 64, 64]
+        pool1  = self.pool1(enc1)
+
+        enc2   = self.enc2(pool1)   # [80, 128, 32, 32]
+        pool2  = self.pool2(enc2)
+
+        enc3   = self.enc3(pool2)   # [80, 256, 16, 16]
+        pool3  = self.pool3(enc3)
+
+        enc4   = self.enc4(pool3)   # [80, 512, 8, 8]
+        pool4  = self.e_attn4(self.pool4(enc4))
+        
+        bot    = self.b_attn4(self.bot(pool4, x))
+        
+        unpool4 = self.unpool4(bot)
+        cat4 = torch.cat((unpool4, enc4), dim=1)
+        dec4 = self.d_attn4(self.dec4(cat4, x))
+
+        unpool3 = self.unpool3(dec4)
+        cat3 = torch.cat((unpool3, enc3), dim=1)
+        dec3 = self.dec3(cat3, x)
+
+        unpool2 = self.unpool2(dec3)
+        cat2 = torch.cat((unpool2, enc2), dim=1)
+        dec2 = self.dec2(cat2, x)
+
+        unpool1 = self.unpool1(dec2)
+        cat1 = torch.cat((unpool1, enc1), dim=1)
+        dec1 = self.dec1(cat1, x)
+
+        output = self.fc(dec1)
+        # output = self.relu(output + x)
+        output = self.relu(output)
+
+        return output
+
+
 
 
 

@@ -385,6 +385,48 @@ class CharbonnierLoss(nn.Module):
         loss = torch.mean(torch.sqrt((diff * diff) + (self.eps*self.eps)))
         return loss
 
+class EdgeLoss(nn.Module):
+    def __init__(self):
+        super(EdgeLoss, self).__init__()
+        k = torch.Tensor([[.05, .25, .4, .25, .05]])
+        self.kernel = torch.matmul(k.t(),k).unsqueeze(0).repeat(1,1,1,1)  # 1 -> gray channel
+        if torch.cuda.is_available():
+            self.kernel = self.kernel.cuda()
+        self.loss = CharbonnierLoss()
+
+    def conv_gauss(self, img):
+        n_channels, _, kw, kh = self.kernel.shape
+        img = F.pad(img, (kw//2, kh//2, kw//2, kh//2), mode='replicate')
+        return F.conv2d(img, self.kernel, groups=n_channels)
+
+    def laplacian_kernel(self, current):
+        filtered    = self.conv_gauss(current)    # filter
+        down        = filtered[:,:,::2,::2]               # downsample
+        new_filter  = torch.zeros_like(filtered)
+        new_filter[:,:,::2,::2] = down*4                  # upsample
+        filtered    = self.conv_gauss(new_filter) # filter
+        diff = current - filtered
+        return diff
+
+    def forward(self, x, y):
+        loss = self.loss(self.laplacian_kernel(x), self.laplacian_kernel(y))
+        return loss
+
+class MSFRLoss(nn.Module):
+    def __init__(self):
+        super(MSFRLoss, self).__init__()
+        self.l1_loss = torch.nn.L1Loss()
+
+    def forward(self, x, y):
+
+        x_fft = torch.fft.rfftn(x)
+        y_fft = torch.fft.rfftn(y)
+      
+        loss = self.l1_loss(x_fft, y_fft)
+        
+        return loss
+
+
 ######################################################################################################################################################################
 ######################################################             LOSS           Class                      ########################################################
 ######################################################################################################################################################################
@@ -585,6 +627,27 @@ class Charbonnier_HighFreq_Loss(nn.Module):
 
         return loss1 + loss2*10.0, {'Charbonnier_Loss': loss1, 'HF_Loss': loss2}
 
+class Charbonnier_Edge_MSFR_Loss(nn.Module):
+    def __init__(self, eps=1e-3):
+        super(Charbonnier_Edge_MSFR_Loss, self).__init__()
+        self.eps     = eps
+        self.CharbonnierLoss = CharbonnierLoss()
+        self.EdgeLoss        = EdgeLoss()
+        self.MSFRLoss        = MSFRLoss()
+
+    def forward(self, gt_100, pred_n_100):
+        # Charbonnier Loss
+        loss1 = self.CharbonnierLoss(pred_n_100, gt_100)
+
+        # Edge Loss
+        loss2 = self.EdgeLoss(pred_n_100, gt_100)
+
+        # MSFR Loss
+        loss3 = self.MSFRLoss(pred_n_100, gt_100)
+
+        return loss1 + 0.1*loss2 + 0.1*loss3, {'Charbonnier_Loss': loss1, 'Edge_Loss': loss2, 'MSFR_Loss': loss3}
+
+        
 
 
 
@@ -614,11 +677,14 @@ def create_criterion(name, mode):
     elif name == 'Window L1 Loss':  # L2 + ResNet50 loss + Window L2
         criterion = Window_L1_Loss(mode=mode)        
 
-    elif name == 'Change L2 L1 Loss':  # L2 + ResNet50 loss + Window L2
+    elif name == 'Change L2 L1 Loss': 
         criterion = Change_L2_L1_Loss(change_epoch=10)
 
-    elif name == 'Charbonnier_HighFreq_Loss':  # L2 + ResNet50 loss + Window L2
+    elif name == 'Charbonnier_HighFreq_Loss': 
         criterion = Charbonnier_HighFreq_Loss()
+
+    elif name == 'Charbonnier_Edge_MSFR_Loss': 
+        criterion = Charbonnier_Edge_MSFR_Loss()
 
     else: 
         raise Exception('Error...! name')

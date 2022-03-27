@@ -65,6 +65,13 @@ def create_model(name):
 
     elif name == "SPADE_UNet_Upgrade_3":
         model = SPADE_UNet_Upgrade_3()
+
+    elif name == "ResFFT_LFSPADE":
+        model = ResFFT_LFSPADE()
+
+    elif name == "ResFFT_Freq_SPADE_Att" or name == "ResFFT_Freq_SPADE_Att_window":
+        model = ResFFT_Freq_SPADE_Att()
+
         ### GAN Base
     # elif name == "FSGAN":
     #     model = FSGAN(generator_type="ConvMixer")

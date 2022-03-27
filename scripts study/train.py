@@ -203,7 +203,7 @@ def main(args):
             valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.save_dir, args.criterion)
 
             # Ours
-        elif args.model_name == 'SPADE_UNet' or args.model_name == 'SPADE_UNet_Upgrade' or args.model_name == 'SPADE_UNet_Upgrade_2' or args.model_name == 'SPADE_UNet_Upgrade_3':
+        elif args.model_name == 'SPADE_UNet' or args.model_name == 'SPADE_UNet_Upgrade' or args.model_name == 'SPADE_UNet_Upgrade_2' or args.model_name == 'SPADE_UNet_Upgrade_3' or args.model_name == 'ResFFT_LFSPADE' or args.model_name == 'ResFFT_Freq_SPADE_Att' or args.model_name == 'ResFFT_Freq_SPADE_Att_window':
             train_stats = train_CNN_Based_Ours(model, criterion, data_loader_train, optimizer, device, epoch, args.patch_training, args.criterion)
             valid_stats = valid_CNN_Based_Ours(model, criterion, data_loader_valid, device, epoch, args.save_dir, args.criterion)
 
