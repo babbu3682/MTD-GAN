@@ -271,7 +271,6 @@ class VGG_Triple_Loss(torch.nn.Module):
         return loss
 
 class ResNet50FeatureExtractor(nn.Module):
-
     def __init__(self, blocks=[1, 2, 3, 4], pretrained=False, progress=True, **kwargs):
         super(ResNet50FeatureExtractor, self).__init__()
         self.model = models.resnet50(pretrained, progress, **kwargs)
@@ -374,7 +373,6 @@ class Window_Conv2D(nn.Module):
 
 class CharbonnierLoss(nn.Module):
     """Charbonnier Loss (L1)"""
-
     def __init__(self, eps=1e-3):
         super(CharbonnierLoss, self).__init__()
         self.eps = eps
@@ -647,7 +645,29 @@ class Charbonnier_Edge_MSFR_Loss(nn.Module):
 
         return loss1 + 0.1*loss2 + 0.1*loss3, {'Charbonnier_Loss': loss1, 'Edge_Loss': loss2, 'MSFR_Loss': loss3}
 
-        
+class Charbonnier_Edge_MSFR_VGG_Loss(nn.Module):
+    def __init__(self, eps=1e-3):
+        super(Charbonnier_Edge_MSFR_VGG_Loss, self).__init__()
+        self.eps     = eps
+        self.CharbonnierLoss = CharbonnierLoss()
+        self.EdgeLoss        = EdgeLoss()
+        self.MSFRLoss        = MSFRLoss()
+        self.loss_VGG        = VGGLoss(device='cuda')
+
+    def forward(self, gt_100, pred_n_100):
+        # Charbonnier Loss
+        loss1 = self.CharbonnierLoss(pred_n_100, gt_100)
+
+        # Edge Loss
+        loss2 = self.EdgeLoss(pred_n_100, gt_100)
+
+        # MSFR Loss
+        loss3 = self.MSFRLoss(pred_n_100, gt_100)
+
+        # VGH Loss
+        loss4 = self.loss_VGG(pred_n_100,  gt_100) 
+
+        return loss1 + 0.5*loss2 + 0.5*loss3 + 0.5*loss4, {'Charbonnier_Loss': loss1, 'Edge_Loss': loss2, 'MSFR_Loss': loss3, 'VGG_Loss': loss4}
 
 
 
@@ -685,6 +705,9 @@ def create_criterion(name, mode):
 
     elif name == 'Charbonnier_Edge_MSFR_Loss': 
         criterion = Charbonnier_Edge_MSFR_Loss()
+
+    elif name == 'Charbonnier_Edge_MSFR_VGG_Loss': 
+        criterion = Charbonnier_Edge_MSFR_VGG_Loss()
 
     else: 
         raise Exception('Error...! name')

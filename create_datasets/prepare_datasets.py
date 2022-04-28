@@ -4,8 +4,6 @@ def build_dataset(training_mode, args):
 
     if args.data_set == 'Sinogram_DCM':
         dataset, collate_fn = Sinogram_Dataset_DCM(mode=training_mode, patch_training=args.patch_training, multiple_GT=args.multiple_GT)
-    elif args.data_set == 'Sinogram_NPY': 
-        dataset, collate_fn = Sinogram_Dataset_NPY(mode=training_mode, patch_training=args.patch_training, multiple_GT=args.multiple_GT)
     elif args.data_set == 'Sinogram_NII': 
         dataset, collate_fn = Sinogram_Dataset_NII(mode=training_mode, patch_training=args.patch_training, multiple_GT=args.multiple_GT)
     elif args.data_set == 'Sinogram_Dataset_DCM_SACNN': 

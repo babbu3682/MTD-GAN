@@ -5,6 +5,7 @@ from monai.data import Dataset
 import re
 import glob
 import pydicom
+import functools
 
 # import warnings
 # warnings.filterwarnings(action='ignore') 
@@ -53,6 +54,17 @@ def dicom_normalize(image, MIN_HU=-1024.0, MAX_HU=3072.0):   # I already check t
    # image = (image - 0.5) / 0.5                  # Range -1.0 ~ 1.0   @ We do not use -1~1 range becuase there is no Tanh act.
    return image
 
+def minmax_normalize(image, option=False):
+    if len(np.unique(image)) != 1:  # Sometimes it cause the nan inputs...
+        image -= image.min()
+        image /= image.max() 
+
+    if option:
+        image = (image - 0.5) / 0.5  # Range -1.0 ~ 1.0   @ We do not use -1~1 range becuase there is no Tanh act.
+
+    return image.astype('float32')
+
+
 ######################################################                    collate_fn            ########################################################
 def default_collate_fn(batch):
     batch = list(filter(lambda x: x is not None, batch))
@@ -63,73 +75,7 @@ def default_collate_fn(batch):
 ######################################################                    Sinogram Task                             ########################################################
 from torchvision import transforms as vision_transforms
 
-def Sinogram_Dataset_NPY(mode, patch_training, multiple_GT):
-    if mode == 'train':
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Train/*/20/*/*/*.npy')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/20/*/*/*.npy'))
-        n_40_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Train/*/40/*/*/*.npy')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/40/*/*/*.npy'))
-        n_60_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Train/*/60/*/*/*.npy')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/60/*/*/*.npy'))
-        n_80_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Train/*/80/*/*/*.npy')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/80/*/*/*.npy'))
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Train/*/X/*/*/*.npy'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/X/*/*/*.npy'))
 
-        files = [{"n_20": n_20, "n_40": n_40, "n_60": n_60, "n_80": n_80, "n_100": n_100} for n_20, n_40, n_60, n_80, n_100 in zip(n_20_imgs, n_40_imgs, n_60_imgs, n_80_imgs, n_100_imgs)]
-          
-        print("Train [Total]  number = ", len(n_20_imgs))
-
-        # CT에 맞는 Augmentation
-        transforms = Compose(
-            [
-                LoadNumpyd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
-                AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),                 
-                ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
-            ]
-        )    
-
-    elif mode == 'valid':
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/20/*/*/*.npy'))
-        n_40_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/40/*/*/*.npy'))
-        n_60_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/60/*/*/*.npy'))
-        n_80_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/80/*/*/*.npy'))
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Valid/*/X/*/*/*.npy'))
-
-        files = [{"n_20": n_20, "n_40": n_40, "n_60": n_60, "n_80": n_80, "n_100": n_100} for n_20, n_40, n_60, n_80, n_100 in zip(n_20_imgs, n_40_imgs, n_60_imgs, n_80_imgs, n_100_imgs)]
-          
-        print("Valid [Total]  number = ", len(n_20_imgs))
-
-        # CT에 맞는 Augmentation
-        transforms = Compose(
-            [
-                LoadNumpyd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
-                AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),                 
-                ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
-            ]
-        )    
-
-
-    else :
-        low_imgs      = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Test/*/20/*/*/*.npy'))
-        high_imgs     = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Test/*/X/*/*/*.npy'))
-
-        dcm_low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
-        dcm_high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
-
-        files = [{"low": low_name, "high": high_name, "dcm_low" : dcm_low, "dcm_high" : dcm_high} for low_name, high_name, dcm_low, dcm_high in zip(low_imgs, high_imgs, dcm_low_imgs, dcm_high_imgs)]
-          
-        print("TEST [Total]  number = ", len(low_imgs))
-
-        # CT에 맞는 Augmentation
-        transforms = Compose(
-            [
-                LoadNumpyd(keys=["low", "high"]),
-                AddChanneld(keys=["low", "high"]), 
-                ToTensord(keys=["low", "high"]),
-                
-                # Unet_with_perceptual Option
-                Lambdad(keys=["low", "high"], func=vision_transforms.Normalize(mean=(0.5), std=(0.5))),
-            ]
-        )
-
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
 
 def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
     if multiple_GT:
@@ -162,6 +108,9 @@ def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
                         RandFlipd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
                         RandRotated(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
                         RandZoomd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+
+                        # Normalize
+                        # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                 
                         ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
                     ]
                 )  
@@ -177,6 +126,9 @@ def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
                         RandFlipd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
                         RandRotated(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
                         RandZoomd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+
+                        # Normalize
+                        # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
                         ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
                     ]
                 )              
@@ -196,7 +148,10 @@ def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
                 [
                     Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=get_pixels_hu),
                     Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=dicom_normalize),
-                    AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),         
+                    AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),     
+
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
                     ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
                 ]
             )    
@@ -228,6 +183,9 @@ def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
                         RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
                         RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
                         RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+
+                        # Normalize
+                        # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
                         ToTensord(keys=["n_20", "n_100"]),
                     ]
                 )  
@@ -243,6 +201,9 @@ def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
                         RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
                         RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
                         RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                        
+                        # Normalize
+                        # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
                         ToTensord(keys=["n_20", "n_100"]),
                     ]
                 )              
@@ -259,7 +220,10 @@ def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
                 [
                     Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
                     Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-                    AddChanneld(keys=["n_20", "n_100"]),         
+                    AddChanneld(keys=["n_20", "n_100"]),     
+
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
                     ToTensord(keys=["n_20", "n_100"]),
                 ]
             )    
@@ -419,6 +383,9 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
                     RandFlipd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
                     RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
                     RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    
+                    # Normalize
+                    # Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
                     ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
                 ]
             )  
@@ -434,6 +401,9 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
                     RandFlipd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
                     RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
                     RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+
+                    # Normalize
+                    # Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
                     ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
                 ]
             )              
@@ -488,7 +458,10 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
             [
                 Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=get_pixels_hu),
                 Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
-                AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),         
+                AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),       
+
+                # Normalize
+                # Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=functools.partial(minmax_normalize, option=False)),                       
                 ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
             ]
         )    
@@ -577,7 +550,10 @@ def TEST_Sinogram_Dataset_DCM():
         [
             Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
             Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-            AddChanneld(keys=["n_20", "n_100"]),                 
+            AddChanneld(keys=["n_20", "n_100"]),         
+
+            # Normalize
+            # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
             ToTensord(keys=["n_20", "n_100"]),
         ]
     )        
@@ -621,6 +597,8 @@ def TEST_Sinogram_Dataset_NII(range_minus1_plus1=False):
                 Flipd(keys=["n_20", "n_100"], spatial_axis=1),
                 Rotate90d(keys=["n_20", "n_100"], k=1, spatial_axes=(0, 1)),  
 
+                # Normalize
+                # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
                 ToTensord(keys=["n_20", "n_100"]),
             ]
         )    
@@ -683,7 +661,10 @@ def TEST_Sinogram_Dataset_DCM_SACNN():
         [
             Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=get_pixels_hu),
             Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
-            AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),         
+            AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),       
+
+            # Normalize
+            # Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=functools.partial(minmax_normalize, option=False)),                   
             ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
         ]
     )        

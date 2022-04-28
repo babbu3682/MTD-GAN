@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 
-def DiffAugment(x, policy='', channels_first=True):
+def DiffAugment(x, policy='color,translation,cutout', channels_first=True):
     if policy:
         if not channels_first:
             x = x.permute(0, 3, 1, 2)

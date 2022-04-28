@@ -1,4 +1,6 @@
 import math
+from telnetlib import X3PAD
+from tkinter import X
 import numpy as np
 import torch 
 import torch.nn as nn
@@ -9,8 +11,66 @@ from .Unet_Factory import *
 from .DUGAN_wrapper import *
 from .edcnn_model import *
 from .Restormer_module.Restormer import *
-from .Uformer.losses import CharbonnierLoss
 from .Uformer.model import *
+
+
+# LOSS
+def ls_gan(inputs, targets):
+    return torch.mean((inputs - targets) ** 2)
+
+class CharbonnierLoss(nn.Module):
+    """Charbonnier Loss (L1)"""
+
+    def __init__(self, eps=1e-3):
+        super(CharbonnierLoss, self).__init__()
+        self.eps = eps
+
+    def forward(self, x, y):
+        diff = x - y
+        # loss = torch.sum(torch.sqrt(diff * diff + self.eps))
+        loss = torch.mean(torch.sqrt((diff * diff) + (self.eps*self.eps)))
+        return loss
+
+class EdgeLoss(nn.Module):
+    def __init__(self):
+        super(EdgeLoss, self).__init__()
+        k = torch.Tensor([[.05, .25, .4, .25, .05]])
+        self.kernel = torch.matmul(k.t(),k).unsqueeze(0).repeat(1,1,1,1)  # 1 -> gray channel
+        if torch.cuda.is_available():
+            self.kernel = self.kernel.cuda()
+        self.loss = CharbonnierLoss()
+
+    def conv_gauss(self, img):
+        n_channels, _, kw, kh = self.kernel.shape
+        img = F.pad(img, (kw//2, kh//2, kw//2, kh//2), mode='replicate')
+        return F.conv2d(img, self.kernel, groups=n_channels)
+
+    def laplacian_kernel(self, current):
+        filtered    = self.conv_gauss(current)    # filter
+        down        = filtered[:,:,::2,::2]               # downsample
+        new_filter  = torch.zeros_like(filtered)
+        new_filter[:,:,::2,::2] = down*4                  # upsample
+        filtered    = self.conv_gauss(new_filter) # filter
+        diff = current - filtered
+        return diff
+
+    def forward(self, x, y):
+        loss = self.loss(self.laplacian_kernel(x), self.laplacian_kernel(y))
+        return loss
+
+class MSFRLoss(nn.Module):
+    def __init__(self):
+        super(MSFRLoss, self).__init__()
+        self.l1_loss = torch.nn.L1Loss()
+
+    def forward(self, x, y):
+
+        x_fft = torch.fft.rfftn(x)
+        y_fft = torch.fft.rfftn(y)
+      
+        loss = self.l1_loss(x_fft, y_fft)
+        
+        return loss
 
 # from einops import rearrange
 # from timm.models.layers import DropPath, to_2tuple, trunc_normal_
@@ -226,8 +286,10 @@ class Low_UNet(UNet_DUGAN):
 
         bottom_x = self.conv(x) + x
         x = bottom_x
+        
         for (up_block, res) in zip(self.up_blocks, residuals[:-1][::-1]):
             x = up_block(x, res)
+
         dec_out = self.conv_out(x)
 
         if self.use_discriminator:
@@ -2097,7 +2159,16 @@ def conv1x1(in_channels, out_channels, stride=1, groups=1):
 def convnxn(in_channels, out_channels, kernel_size, stride=1, groups=1, padding=0):
     return nn.Conv2d(in_channels, out_channels,
                      kernel_size=kernel_size, stride=stride, padding=padding, groups=groups, bias=False)
-            
+
+def new_mask_radial(C, H, W):
+    mask  = torch.zeros(size=(C, H, W), device='cuda')
+    
+    for i in range(H):
+        for j in range(W):
+            for c in range(C):
+                mask[c, i, j] = distance(i, j, imageSize=H, r=2**c)
+    return mask
+
 class DropPath(nn.Module):
 
     def __init__(self, p, **kwargs):
@@ -2217,22 +2288,25 @@ class AttentionBlockA(nn.Module):
         return x
 
 class FreqLayer(nn.Module):
-    def __init__(self, batch_size, freq_ch=8, height=64, width=64):
+    def __init__(self, freq_ch=3, height=64, width=64):        
         super(FreqLayer, self).__init__()
         self.freq_ch   = freq_ch
-        self.freq_mask = mask_radial(B=batch_size, C=freq_ch, H=height, W=width)
-                                         
+        self.freq_mask = nn.Parameter(new_mask_radial(C=freq_ch, H=height, W=width).float(), requires_grad=True)
+
     def forward(self, image):
+
         low_list = []
         for c in range(self.freq_ch):
             
             img_fft         = torch.fft.fft2(image)
             img_fft_center  = torch.fft.fftshift(img_fft)
-            
-            if self.training:
-                fd_low      = torch.mul(img_fft_center, self.freq_mask[:, c, :, :].unsqueeze(1))
-            else :
-                fd_low      = torch.mul(img_fft_center, self.freq_mask[0, c, :, :].unsqueeze(0).unsqueeze(1))
+
+            fd_low          = torch.mul(img_fft_center, self.freq_mask.repeat(image.shape[0], 1, 1, 1)[:, c, :, :].unsqueeze(1))            
+            # if self.training:
+            #     fd_low      = torch.mul(img_fft_center, self.freq_mask.repeat(image.shape[0], 1, 1, 1)[:, c, :, :].unsqueeze(1))
+            # else :
+            #     fd_low      = torch.mul(img_fft_center, self.freq_mask[c, :, :].unsqueeze(0).unsqueeze(1))
+
 
             img_low_center  = torch.fft.ifftshift(fd_low)
             img_low         = torch.fft.ifft2(img_low_center)
@@ -2256,7 +2330,7 @@ class Att_BasicConv(nn.Module):
             
         elif norm == 'spade':
             # Low Freq
-            self.lf_layer = FreqLayer(batch_size=50*8, freq_ch=lf_channel, height=feat_H, width=feat_W)           
+            self.lf_layer = FreqLayer(freq_ch=lf_channel, height=feat_H, width=feat_W)           
             
             # Norm
             self.norm  = nn.InstanceNorm2d(out_channel, affine=False)
@@ -2319,78 +2393,138 @@ class E_ResBlock_FFT_block_Att(nn.Module):
 
         self.conv1x1 = Att_BasicConv(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
 
-    def forward(self, x):
-        _, _, H, W = x.shape
+    # def forward(self, x):
+    #     _, _, H, W = x.shape
 
+    #     x = self.conv(x)
+        
+    #     y   = torch.fft.rfft2(x, norm='backward')
+    #     y_f = torch.cat([y.real, y.imag], dim=1)
+    #     y_f = self.main_fft2(self.main_fft1(y_f))
+        
+    #     y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+    #     y   = torch.complex(y_real, y_imag)
+    #     y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+
+    #     mix = torch.cat([self.main2(self.main1(x)), x, y], dim=1)
+
+    #     return self.conv1x1(mix)
+
+    def forward(self, x):
         x = self.conv(x)
         
-        y   = torch.fft.rfft2(x, norm='backward')
-        y_f = torch.cat([y.real, y.imag], dim=1)
-        y_f = self.main_fft2(self.main_fft1(y_f))
-        
-        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
-        y   = torch.complex(y_real, y_imag)
-        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+        y   = torch.fft.fft2(x)
+        y   = torch.fft.fftshift(y)
+        # y   = torch.log(y)
 
-        mix = torch.cat([self.main2(self.main1(x)), x, y], dim=1)
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)        
+        y   = torch.complex(y_real, y_imag)
+
+        # y   = torch.exp(y)
+        y   = torch.fft.ifftshift(y)
+        y   = torch.fft.ifft2(y)
+
+        mix = torch.cat([self.main2(self.main1(x)), x, y.abs()], dim=1)
 
         return self.conv1x1(mix)
 
 class D_ResBlock_FFT_block_Att(nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, feat_H, feat_W):
+    def __init__(self, in_channels, hidden_channels, out_channels, lf_channel, feat_H, feat_W):
         super(D_ResBlock_FFT_block_Att, self).__init__()
         self.conv  = Att_BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
         
-        self.main1 = Att_BasicConv(out_channels, hidden_channels, kernel_size=3, stride=1, norm='spade', relu='relu', feat_H=feat_H, feat_W=feat_W)
-        self.main2 = Att_BasicConv(hidden_channels, out_channels, kernel_size=3, stride=1, norm='spade', relu='none', feat_H=feat_H, feat_W=feat_W)
+        self.main1 = Att_BasicConv(out_channels, hidden_channels, kernel_size=3, stride=1, norm='spade', relu='relu', lf_channel=lf_channel, feat_H=feat_H, feat_W=feat_W)
+        self.main2 = Att_BasicConv(hidden_channels, out_channels, kernel_size=3, stride=1, norm='spade', relu='none', lf_channel=lf_channel, feat_H=feat_H, feat_W=feat_W)
         
         self.main_fft1 = Att_BasicConv(out_channels*2, hidden_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
         self.main_fft2 = Att_BasicConv(hidden_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
 
         self.conv1x1 = Att_BasicConv(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
 
-    def forward(self, x, src):
-        _, _, H, W = x.shape
-        x = self.conv(x)
+    # def forward(self, x, src):
+    #     _, _, H, W = x.shape
+    #     x = self.conv(x)
 
-        y   = torch.fft.rfft2(x, norm='backward')
-        y_f = torch.cat([y.real, y.imag], dim=1)
-        y_f = self.main_fft2(self.main_fft1(y_f))
+    #     y   = torch.fft.rfft2(x, norm='backward')
+    #     y_f = torch.cat([y.real, y.imag], dim=1)
+    #     y_f = self.main_fft2(self.main_fft1(y_f))
         
-        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
-        y   = torch.complex(y_real, y_imag)
-        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+    #     y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+    #     y   = torch.complex(y_real, y_imag)
+    #     y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
 
-        mix = torch.cat([self.main2(self.main1(x, src), src), x, y], dim=1)
+    #     mix = torch.cat([self.main2(self.main1(x, src), src), x, y], dim=1)
+        
+    #     return self.conv1x1(mix)
+
+    def forward(self, x, src):
+        x = self.conv(x)
+        
+        y   = torch.fft.fft2(x)
+        y   = torch.fft.fftshift(y)
+        # y   = torch.log(y)
+
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)        
+        y   = torch.complex(y_real, y_imag)
+
+        # y   = torch.exp(y)
+        y   = torch.fft.ifftshift(y)
+        y   = torch.fft.ifft2(y)
+
+        mix = torch.cat([self.main2(self.main1(x, src), src), x, y.abs()], dim=1)
         
         return self.conv1x1(mix)
 
 class B_ResBlock_FFT_block_Att(nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, feat_H, feat_W):
+    def __init__(self, in_channels, hidden_channels, out_channels, lf_channel, feat_H, feat_W):
         super(B_ResBlock_FFT_block_Att, self).__init__()
         self.conv  = Att_BasicConv(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
 
         self.main1 = Att_BasicConv(out_channels,  hidden_channels, kernel_size=3, stride=1, norm='half',  relu='relu')
-        self.main2 = Att_BasicConv(hidden_channels,  out_channels, kernel_size=3, stride=1, norm='spade', relu='none', feat_H=feat_H, feat_W=feat_W)
+        self.main2 = Att_BasicConv(hidden_channels,  out_channels, kernel_size=3, stride=1, norm='spade', relu='none', lf_channel=lf_channel, feat_H=feat_H, feat_W=feat_W)
         
         self.main_fft1 = Att_BasicConv(out_channels*2,  hidden_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
         self.main_fft2 = Att_BasicConv(hidden_channels*2,  out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
 
         self.conv1x1 = Att_BasicConv(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
 
-    def forward(self, x, src):
-        _, _, H, W = x.shape
-        x = self.conv(x)
+    # def forward(self, x, src):
+    #     _, _, H, W = x.shape
+    #     x = self.conv(x)
 
-        y   = torch.fft.rfft2(x, norm='backward')
-        y_f = torch.cat([y.real, y.imag], dim=1)
-        y_f = self.main_fft2(self.main_fft1(y_f))
+    #     y   = torch.fft.rfft2(x, norm='backward')
+    #     y_f = torch.cat([y.real, y.imag], dim=1)
+    #     y_f = self.main_fft2(self.main_fft1(y_f))
         
-        y_real, y_imag = torch.chunk(y_f, 2, dim=1)
-        y   = torch.complex(y_real, y_imag)
-        y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
+    #     y_real, y_imag = torch.chunk(y_f, 2, dim=1)
+    #     y   = torch.complex(y_real, y_imag)
+    #     y   = torch.fft.irfft2(y, s=(H, W), norm='backward')
 
-        mix = torch.cat([self.main2(self.main1(x), src), x, y], dim=1)
+    #     mix = torch.cat([self.main2(self.main1(x), src), x, y], dim=1)
+        
+    #     return self.conv1x1(mix)
+
+    def forward(self, x, src):
+        x = self.conv(x)
+        
+        y   = torch.fft.fft2(x)
+        y   = torch.fft.fftshift(y)
+        # y   = torch.log(y)
+
+        y_f = torch.cat([y.real, y.imag], dim=1)
+        y_f = self.main_fft2(self.main_fft1(y_f))        
+        y_real, y_imag = torch.chunk(y_f, 2, dim=1)        
+        y   = torch.complex(y_real, y_imag)
+
+        # y   = torch.exp(y)
+        y   = torch.fft.ifftshift(y)
+        y   = torch.fft.ifft2(y)
+
+        mix = torch.cat([self.main2(self.main1(x), src), x, y.abs()], dim=1)
         
         return self.conv1x1(mix)
 
@@ -2412,21 +2546,22 @@ class ResFFT_Freq_SPADE_Att(nn.Module):
         self.pool4   = Downsample_Unet(n_feat=512)
         self.e_attn4 = AttentionBlockA(dim_in=512, dim_out=512//4, heads=8)
 
-        self.bot     = B_ResBlock_FFT_block_Att(in_channels=512, hidden_channels=1024, out_channels=512, feat_H=4, feat_W=4)
+        self.bot     = B_ResBlock_FFT_block_Att(in_channels=512, hidden_channels=1024, out_channels=512, lf_channel=1, feat_H=4, feat_W=4)
+        # self.bot     = E_ResBlock_FFT_block_Att(in_channels=512, out_channels=512)
         self.b_attn4 = AttentionBlockA(dim_in=512, dim_out=512//4, heads=8)
 
         self.unpool4 = Upsample_Unet(n_feat=512)
-        self.dec4    = D_ResBlock_FFT_block_Att(in_channels=2*512, hidden_channels=512, out_channels=256, feat_H=8, feat_W=8)
+        self.dec4    = D_ResBlock_FFT_block_Att(in_channels=2*512, hidden_channels=512, out_channels=256, lf_channel=2, feat_H=8, feat_W=8)
         self.d_attn4 = AttentionBlockA(dim_in=256, dim_out=256//4, heads=8)
 
         self.unpool3 = Upsample_Unet(n_feat=256)
-        self.dec3    = D_ResBlock_FFT_block_Att(in_channels=2*256, hidden_channels=256, out_channels=128, feat_H=16, feat_W=16)
+        self.dec3    = D_ResBlock_FFT_block_Att(in_channels=2*256, hidden_channels=256, out_channels=128, lf_channel=3, feat_H=16, feat_W=16)
                     
         self.unpool2 = Upsample_Unet(n_feat=128)
-        self.dec2    = D_ResBlock_FFT_block_Att(in_channels=2*128, hidden_channels=128, out_channels=64, feat_H=32, feat_W=32)
+        self.dec2    = D_ResBlock_FFT_block_Att(in_channels=2*128, hidden_channels=128, out_channels=64, lf_channel=4, feat_H=32, feat_W=32)
         
         self.unpool1 = Upsample_Unet(n_feat=64)
-        self.dec1    = D_ResBlock_FFT_block_Att(in_channels=2*64, hidden_channels=64, out_channels=64, feat_H=64, feat_W=64)
+        self.dec1    = D_ResBlock_FFT_block_Att(in_channels=2*64, hidden_channels=64, out_channels=64, lf_channel=5, feat_H=64, feat_W=64)
 
         self.fc   = nn.Conv2d(in_channels=64, out_channels=output_nc, kernel_size=1, stride=1, padding=0, bias=True)
         self.relu = nn.ReLU()
@@ -2445,6 +2580,7 @@ class ResFFT_Freq_SPADE_Att(nn.Module):
         pool4  = self.e_attn4(self.pool4(enc4))
         
         bot    = self.b_attn4(self.bot(pool4, x))
+        # bot    = self.b_attn4(self.bot(pool4))
         
         unpool4 = self.unpool4(bot)
         cat4 = torch.cat((unpool4, enc4), dim=1)
@@ -2467,6 +2603,242 @@ class ResFFT_Freq_SPADE_Att(nn.Module):
         output = self.relu(output)
 
         return output
+
+# New Generator
+class Conv_Block(nn.Module):
+    def __init__(self, in_channel, out_channel, kernel_size, stride, bias=False, norm=None, relu=None):
+        super(Conv_Block, self).__init__()
+        self.conv = nn.Conv2d(in_channel, out_channel, kernel_size, padding=kernel_size//2, stride=stride, bias=bias)
+        self.norm_type = norm
+
+        # Norm
+        if norm == 'half':
+            self.norm = nn.InstanceNorm2d(out_channel//2, affine=True)
+        elif norm == 'spade':
+            self.norm       = nn.InstanceNorm2d(out_channel, affine=False)
+            self.mlp_shared = nn.Sequential(nn.Conv2d(1, 128, kernel_size=3, padding=3//2), nn.ReLU())
+            self.mlp_gamma  = nn.Conv2d(128, out_channel, kernel_size=3, padding=3//2)
+            self.mlp_beta   = nn.Conv2d(128, out_channel, kernel_size=3, padding=3//2)
+        else: 
+            self.norm = None
+
+        # Act
+        if relu == 'relu':
+            self.relu = nn.ReLU(inplace=True)
+        else :
+            self.relu = None
+
+    def forward(self, x, src=None):
+        x = self.conv(x)
+
+        if self.norm is not None:
+            if self.norm_type == 'half':
+                x_norm, x_idt = torch.chunk(x, 2, dim=1)
+                x_norm        = self.norm(x_norm)
+                x             = torch.cat([x_norm, x_idt], dim=1)
+            elif self.norm_type == 'spade':
+                x_norm = self.norm(x)
+                segmap = F.interpolate(src, size=x_norm.size()[2:], mode='bicubic')
+                actv   = self.mlp_shared(segmap)
+                gamma  = self.mlp_gamma(actv)
+                beta   = self.mlp_beta(actv)
+
+                # Apply scale & bias
+                x = x_norm*gamma + beta
+            else :
+                x = self.norm(x)
+
+        if self.relu is not None:
+            x = self.relu(x)
+        
+        return x
+
+class Encode_Block(nn.Module):
+    def __init__(self, in_channels, out_channels=64):
+        super(Encode_Block, self).__init__()
+        # Stem
+        self.conv  = Conv_Block(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+
+        # Fourier domain        
+        self.fft_conv1 = Conv_Block(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.fft_conv2 = Conv_Block(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+        # Image domain
+        self.img_conv1 = Conv_Block(out_channels, out_channels, kernel_size=3, stride=1, norm='half', relu='relu')
+        self.img_conv2 = Conv_Block(out_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+        
+        # Mixing
+        self.conv1x1 = Conv_Block(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
+
+    def forward(self, x):
+        # Stem
+        x = self.conv(x)
+        _, _, H, W = x.shape
+
+        # Fourier domain   
+        fft = torch.fft.rfft2(x, norm='backward')
+        fft = torch.cat([fft.real, fft.imag], dim=1)
+        fft = self.fft_conv2(self.fft_conv1(fft))        
+        fft_real, fft_imag = torch.chunk(fft, 2, dim=1)        
+        fft = torch.complex(fft_real, fft_imag)
+        fft = torch.fft.irfft2(fft, s=(H, W), norm='backward')
+        
+        # Image domain  
+        img = self.img_conv1(x)
+        img = self.img_conv2(img)
+
+        # Mixing
+        mix    = torch.cat([x, img, fft], dim=1)
+        output = self.conv1x1(mix)
+
+        return output
+
+class Decode_Block(nn.Module):
+    def __init__(self, in_channels, out_channels=64):
+        super(Decode_Block, self).__init__()
+
+        # Stem
+        self.conv  = Conv_Block(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+
+        # Fourier domain        
+        self.fft_conv1 = Conv_Block(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.fft_conv2 = Conv_Block(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+        # Image domain
+        self.img_conv1 = Conv_Block(out_channels, out_channels, kernel_size=3, stride=1, norm='spade', relu='relu')
+        self.img_conv2 = Conv_Block(out_channels, out_channels, kernel_size=3, stride=1, norm='spade', relu='none')
+        
+        # Mixing
+        self.conv1x1 = Conv_Block(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
+
+
+    def forward(self, x, src):
+        # Stem
+        x = self.conv(x)
+        _, _, H, W = x.shape
+
+        # Fourier domain   
+        fft = torch.fft.rfft2(x, norm='backward')
+        fft = torch.cat([fft.real, fft.imag], dim=1)
+        fft = self.fft_conv2(self.fft_conv1(fft))        
+        fft_real, fft_imag = torch.chunk(fft, 2, dim=1)        
+        fft = torch.complex(fft_real, fft_imag)
+        fft = torch.fft.irfft2(fft, s=(H, W), norm='backward')
+        
+        # Image domain  
+        img = self.img_conv1(x, src)
+        img = self.img_conv2(img, src)
+
+        # Mixing
+        mix    = torch.cat([x, img, fft], dim=1)
+        output = self.conv1x1(mix)
+
+        return output
+
+class Bottle_Block(nn.Module):
+    def __init__(self, in_channels, out_channels=64):
+        super(Bottle_Block, self).__init__()
+        # Stem
+        self.conv  = Conv_Block(in_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+
+        # Fourier domain        
+        self.fft_conv1 = Conv_Block(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='relu')
+        self.fft_conv2 = Conv_Block(out_channels*2, out_channels*2, kernel_size=1, stride=1,  norm='none', relu='none')
+
+        # Image domain
+        self.img_conv1 = Conv_Block(out_channels, out_channels, kernel_size=3, stride=1, norm='half', relu='relu')
+        self.img_conv2 = Conv_Block(out_channels, out_channels, kernel_size=3, stride=1, norm='none', relu='none')
+        
+        # Mixing
+        self.conv1x1 = Conv_Block(out_channels*3, out_channels, kernel_size=1, stride=1, bias=True, norm='none', relu='relu')
+
+        # Attention
+        self.attn    = AttentionBlockA(dim_in=out_channels, dim_out=out_channels//4, heads=8)
+
+    def forward(self, x):
+        # Stem
+        x = self.conv(x)
+        _, _, H, W = x.shape
+
+        # Fourier domain   
+        fft = torch.fft.rfft2(x, norm='backward')
+        fft = torch.cat([fft.real, fft.imag], dim=1)
+        fft = self.fft_conv2(self.fft_conv1(fft))        
+        fft_real, fft_imag = torch.chunk(fft, 2, dim=1)        
+        fft = torch.complex(fft_real, fft_imag)
+        fft = torch.fft.irfft2(fft, s=(H, W), norm='backward')
+        
+        # Image domain  
+        img = self.img_conv1(x)
+        img = self.img_conv2(img)
+
+        # Mixing
+        mix    = torch.cat([x, img, fft], dim=1)
+        output = self.conv1x1(mix)
+        
+        # Attention
+        output = self.attn(output)
+
+        return output
+
+class ResFFT_Generator(nn.Module):
+    def __init__(self, channel=64):
+        super(ResFFT_Generator, self).__init__()
+
+        self.enc_layer1   = nn.Sequential(*nn.ModuleList([Encode_Block(in_channels=1, out_channels=channel*2)]+[Encode_Block(in_channels=channel*2, out_channels=channel*2) for _ in range(7)]))
+        
+        self.pool2        = Downsample_Unet(n_feat=128)
+        self.enc_layer2   = nn.Sequential(*nn.ModuleList([Encode_Block(in_channels=channel*2, out_channels=channel*4)]+[Encode_Block(in_channels=channel*4, out_channels=channel*4) for _ in range(7)]))
+        
+        self.pool3        = Downsample_Unet(n_feat=256)        
+        self.bot3         = nn.Sequential(*nn.ModuleList([Bottle_Block(in_channels=channel*4, out_channels=channel*4)]+[Bottle_Block(in_channels=channel*4, out_channels=channel*4) for _ in range(7)]))
+        self.unpool3      = Upsample_Unet(n_feat=256)
+
+        self.dec_layer1   = nn.ModuleList([Decode_Block(in_channels=channel*4, out_channels=channel*2)]+[Decode_Block(in_channels=channel*2, out_channels=channel*2) for _ in range(7)])
+        self.unpool4      = Upsample_Unet(n_feat=128)
+        
+        self.dec_layer2   = nn.ModuleList([Decode_Block(in_channels=channel*2, out_channels=channel)]+[Decode_Block(in_channels=channel, out_channels=channel) for _ in range(7)])
+
+        # Head                    
+        self.fc           = nn.Conv2d(in_channels=channel, out_channels=1, kernel_size=1, stride=1, padding=0, bias=True)
+        self.relu         = nn.ReLU()
+
+    def two_input_list(self, x, input, layers):
+        for block in layers:
+            x = block(x, input)
+        return x        
+
+    def forward(self, input):
+        x = self.enc_layer1(input)     
+        x = self.pool2(x)
+        x = self.enc_layer2(x) 
+        
+        x = self.pool3(x)
+        x = self.bot3(x)
+        x = self.unpool3(x)
+
+        x = self.two_input_list(x, input, self.dec_layer1)
+        x = self.unpool4(x)
+
+        x = self.two_input_list(x, input, self.dec_layer2)
+
+        # Head
+        x = self.fc(x)
+
+        return self.relu(x)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2552,6 +2924,520 @@ class FSGAN(nn.Module):
 
         
 
+# 2. FDGAN - Fourer Discriminator
+class Img_UNet(UNet_DUGAN):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.lpf_conv = FreqLayer(freq_ch=5, height=64, width=64)           
+
+    def forward(self, input):
+        input = self.lpf_conv(input)     
+
+        x = input
+        residuals = []
+
+        for i in range(len(self.down_blocks)):
+            x, unet_res = self.down_blocks[i](x)
+            residuals.append(unet_res)
+
+        bottom_x = self.conv(x) + x
+        x = bottom_x
+        
+        for (up_block, res) in zip(self.up_blocks, residuals[:-1][::-1]):
+            x = up_block(x, res)
+
+        dec_out = self.conv_out(x)
+
+        if self.use_discriminator:
+            enc_out = self.to_logit(bottom_x)
+            if self.use_sigmoid:
+                dec_out = torch.sigmoid(dec_out)
+                enc_out = torch.sigmoid(enc_out)
+            return enc_out.squeeze(), dec_out
+
+        if self.skip_connection:
+            dec_out += input
+        if self.use_tanh:
+            dec_out = torch.tanh(dec_out)
+
+        return dec_out
+
+class Fourier_UNet(UNet_DUGAN):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+    def forward(self, input):
+        # Fourier Domain
+        # print("C0 == ", input.max(), input.min())
+
+        input   = torch.fft.fft2(input)
+        input   = torch.fft.fftshift(input).float()
+        # input   = 20*torch.log(torch.abs(input)).float()  # float() is very important, torch.tensor.real ~= torch.tesor.float
+        # input   = torch.log(torch.abs(input)).float()  # float() is very important, torch.tensor.real ~= torch.tesor.float
+        
+        # print("C00 == ", input.max(), input.min())
+
+        x = input
+        residuals = []
+
+        for i in range(len(self.down_blocks)):
+            x, unet_res = self.down_blocks[i](x)
+            residuals.append(unet_res)
+
+        bottom_x = self.conv(x) + x
+        x = bottom_x
+        for (up_block, res) in zip(self.up_blocks, residuals[:-1][::-1]):
+            x = up_block(x, res)
+        dec_out = self.conv_out(x)
+
+        if self.use_discriminator:
+            enc_out = self.to_logit(bottom_x)
+            if self.use_sigmoid:
+                dec_out = torch.sigmoid(dec_out)
+                enc_out = torch.sigmoid(enc_out)
+            return enc_out.squeeze(), dec_out
+
+        if self.skip_connection:
+            dec_out += input
+        if self.use_tanh:
+            dec_out = torch.tanh(dec_out)
+
+        return dec_out
+
+class FDGAN(nn.Module):
+    def __init__(self):
+        super(FDGAN, self).__init__()
+
+        self.Generator             = ResFFT_Freq_SPADE_Att()
+
+        self.Img_discriminator     = Img_UNet(in_channels=5, repeat_num=6, use_discriminator=True, conv_dim=64, use_sigmoid=False)
+        self.Fourier_discriminator = Fourier_UNet(in_channels=1, repeat_num=6, use_discriminator=True, conv_dim=64, use_sigmoid=False)
+        
+        # self.gan_metric    = nn.BCEWithLogitsLoss()
+        self.gan_metric      = ls_gan
+        
+        self.pixel_metric1   = CharbonnierLoss()
+        self.pixel_metric2   = EdgeLoss()
+        self.pixel_metric3   = MSFRLoss()        
+
+    # ref : https://github.com/basiclab/gngan-pytorch
+    def normalize_gradient_enc_dec(self, net_D, x, option, **kwargs):
+        """
+                        f
+        f_hat = --------------------
+                || grad_f || + | f |
+
+        reference : https://github.com/basiclab/GNGAN-PyTorch
+        """
+        x.requires_grad_(True)
+        if option:
+            f_enc, f_dec  = net_D(DiffAugment(x, policy='color,translation,cutout'), **kwargs)
+        else :
+            f_enc, f_dec  = net_D(x, **kwargs)
+
+        # encoder
+        enc_grad      = torch.autograd.grad(f_enc, [x], torch.ones_like(f_enc), create_graph=True, retain_graph=True)[0]
+        enc_grad_norm = torch.norm(torch.flatten(enc_grad, start_dim=1), p=2, dim=1)
+        enc_grad_norm = enc_grad_norm.view(-1, *[1 for _ in range(len(f_enc.shape) - 1)])
+        enc_f_hat     = (f_enc / (enc_grad_norm + torch.abs(f_enc)))
+
+        # decoder
+        dec_grad      = torch.autograd.grad(f_dec, [x], torch.ones_like(f_dec), create_graph=True, retain_graph=True)[0]
+        dec_grad_norm = torch.norm(torch.flatten(dec_grad, start_dim=1), p=2, dim=1)
+        dec_grad_norm = dec_grad_norm.view(-1, *[1 for _ in range(len(f_dec.shape) - 1)])
+        dec_f_hat     = (f_dec / (dec_grad_norm + torch.abs(f_dec)))
+
+        return enc_f_hat, dec_f_hat
+
+    def train_Img_Discriminator(self, full_dose, low_dose, gen_full_dose, prefix='Img_D', n_iter=0):
+        ############## Train Discriminator ###################
+        img_real_enc,   img_real_dec     = self.normalize_gradient_enc_dec(self.Img_discriminator, full_dose, True)
+        img_fake_enc,   img_fake_dec     = self.normalize_gradient_enc_dec(self.Img_discriminator, gen_full_dose.detach(), True)
+        img_source_enc, img_source_dec   = self.normalize_gradient_enc_dec(self.Img_discriminator, low_dose, True)
+
+        disc_loss = self.gan_metric(img_real_enc,   torch.ones_like(img_real_enc)) + self.gan_metric(img_real_dec, torch.ones_like(img_real_dec)) + \
+                    self.gan_metric(img_fake_enc,   torch.zeros_like(img_fake_enc)) + self.gan_metric(img_fake_dec, torch.zeros_like(img_fake_dec)) + \
+                    self.gan_metric(img_source_enc, torch.zeros_like(img_source_enc)) + self.gan_metric(img_source_dec, torch.zeros_like(img_source_dec))        
+
+        return disc_loss
+
+    def train_Fourier_Discriminator(self, full_dose, low_dose, gen_full_dose, prefix='Fourier_D', n_iter=0):
+        ############## Train Discriminator ###################
+        Fourier_real_enc,   Fourier_real_dec    = self.normalize_gradient_enc_dec(self.Fourier_discriminator, full_dose, True)
+        Fourier_fake_enc,   Fourier_fake_dec    = self.normalize_gradient_enc_dec(self.Fourier_discriminator, gen_full_dose.detach(), True)
+        Fourier_source_enc, Fourier_source_dec  = self.normalize_gradient_enc_dec(self.Fourier_discriminator, low_dose, True)
+
+        # print("c1 ==", Fourier_real_enc.max(), Fourier_real_enc.min())
+        # print("c2 ==", Fourier_real_dec.max(), Fourier_real_dec.min())
+        # print("c3 ==", Fourier_fake_enc.max(), Fourier_fake_enc.min())
+        # print("c4 ==", Fourier_fake_dec.max(), Fourier_fake_dec.min())
+        # print("c5 ==", Fourier_source_enc.max(), Fourier_source_enc.min())
+        # print("c6 ==", Fourier_source_dec.max(), Fourier_source_dec.min())
+
+        disc_loss = self.gan_metric(Fourier_real_enc,   torch.ones_like(Fourier_real_enc)) + self.gan_metric(Fourier_real_dec, torch.ones_like(Fourier_real_dec)) + \
+                    self.gan_metric(Fourier_fake_enc,   torch.zeros_like(Fourier_fake_enc)) + self.gan_metric(Fourier_fake_dec, torch.zeros_like(Fourier_fake_dec)) + \
+                    self.gan_metric(Fourier_source_enc, torch.zeros_like(Fourier_source_enc)) + self.gan_metric(Fourier_source_dec, torch.zeros_like(Fourier_source_dec))
+
+        return disc_loss
+
+
+# 3. New version please last...
+class Window_Conv2D(nn.Module):
+    '''
+    HU summary  
+          [HU threshold]                                 [0 ~ 1 Range]                 [weight / bias]
+    brain          = W:80 L:40                          W:0.250 L:0.270               W:50.000 B:-12.500
+    subdural       = W:130-300 L:50-100                 W:0.246 L:0.278               W:31.250 B:-7.687
+    stroke         = W:8 L:32 or W:40 L:40              W:0.257 L:0.259               W:45.455 B:-11.682
+    temporal bones = W:2800 L:600 or W:4000 L:700       W:0.055 L:0.738               W:1.464  B:-0.081
+    soft tisuues   = W:350-400 L:20-60                  W:0.212 L:0.298               W:11.628 B:-2.465
+    '''        
+    def __init__(self, mode, in_channels=1, out_channels=5):
+        super(Window_Conv2D, self).__init__()
+        self.out_channels = out_channels
+        self.conv_layer   = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1, padding=0, bias=True)
+        
+        if mode == "relu":
+            self.act_layer = self.upbound_relu
+        elif mode == "sigmoid":
+            self.act_layer = self.upbound_sigmoid
+        else:
+            raise Exception()
+        
+        # Initialize by xavier_uniform_
+        self.init_weight()
+        
+    def upbound_relu(self, x):
+        return torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+
+    def upbound_sigmoid(self, x):
+        return 1.0 * torch.sigmoid(x)
+                    
+    def init_weight(self):
+        print("inintializing...!")
+        
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):        
+                for idx in range(self.out_channels):
+                    if idx % 5 == 0:                       
+                        nn.init.constant_(m.weight[0, :, :, :], 50.0)    # torch.Size([5, 1, 1, 1])
+                        nn.init.constant_(m.bias[0], -12.5)              # torch.Size([5])                  
+                    elif idx % 5 == 1:                       
+                        nn.init.constant_(m.weight[1, :, :, :], 31.250)  # torch.Size([5, 1, 1, 1])
+                        nn.init.constant_(m.bias[1], -7.687)             # torch.Size([5])                  
+                    elif idx % 5 == 2:                       
+                        nn.init.constant_(m.weight[2, :, :, :], 45.455)  # torch.Size([5, 1, 1, 1])
+                        nn.init.constant_(m.bias[2], -11.682)            # torch.Size([5])                  
+                    elif idx % 5 == 3:                       
+                        nn.init.constant_(m.weight[3, :, :, :], 1.464)   # torch.Size([5, 1, 1, 1])
+                        nn.init.constant_(m.bias[3], -0.081)             # torch.Size([5])                  
+                    elif idx % 5 == 4:                       
+                        nn.init.constant_(m.weight[4, :, :, :], 11.628)  # torch.Size([5, 1, 1, 1])
+                        nn.init.constant_(m.bias[4], -2.465)             # torch.Size([5])                  
+                    else :                       
+                        raise Exception()
+                                     
+    def forward(self, x):
+        out = self.conv_layer(x)
+        out = self.act_layer(out)
+        # out = torch.cat([x, out], dim=1)
+        return out
+    
+    def inference(self, x):
+        self.eval()
+        with torch.no_grad():
+            x = self.conv_layer(x)
+            x = self.act_layer(x)
+        return x    
+
+
+
+# GNGAN -> fail to learning...
+# class Image_PatchGAN(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+#         super().__init__()
+#         # self.lpf_conv = FreqLayer(freq_ch=5, height=64, width=64)     
+#         # self.conv_window = Window_Conv2D(mode='relu', in_channels=1, out_channels=5)      
+        
+#         self.conv1    = torch.nn.Conv2d(in_channels*5, out_channels, kernel_size, stride, padding)
+#         self.relu1    = nn.LeakyReLU(0.2)
+#         self.conv2    = torch.nn.Conv2d(out_channels, out_channels*2, kernel_size, stride, padding)
+#         self.relu2    = nn.LeakyReLU(0.2)
+#         self.conv3    = torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu3    = nn.LeakyReLU(0.2)
+#         self.conv4    = torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu4    = nn.LeakyReLU(0.2)
+#         self.conv5    = torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu5    = nn.LeakyReLU(0.2)
+#         self.conv6    = torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu6    = nn.LeakyReLU(0.2)                
+
+#         # Init
+#         for m in self.modules():
+#             if isinstance(m, nn.Conv2d):
+#                 nn.init.kaiming_normal_(m.weight)
+
+#     def forward(self, input):
+#         # Move to low freq domain
+#         # input = self.conv_window(input)     
+#         input = self.window_filter(input)
+        
+#         # PatchGAN
+#         input = self.relu1(self.conv1(input))
+#         input = self.relu2(self.conv2(input))
+#         input = self.relu3(self.conv3(input))
+#         input = self.relu4(self.conv4(input))
+#         input = self.relu5(self.conv5(input))
+#         input = self.relu6(self.conv6(input))
+#         input = input.view(input.size(0), -1)
+
+#         return input
+
+
+#     def window_filter(self, x):
+#         weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+#         weight[0, :, :, :] = 50.0
+#         weight[1, :, :, :] = 31.250
+#         weight[2, :, :, :] = 45.455
+#         weight[3, :, :, :] = 1.464
+#         weight[4, :, :, :] =  11.628
+#         bias    = torch.ones(size=(5,)).cuda()        
+#         bias[0] =  -12.5
+#         bias[1] =  -7.687
+#         bias[2] =  -11.682
+#         bias[3] =  -0.081
+#         bias[4] =  -2.465        
+
+#         x = F.conv2d(x, weight, bias)
+#         x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+#         return x
+
+# class Fourier_PatchGAN(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+#         super().__init__()
+
+#         self.conv1    = torch.nn.Conv2d(in_channels*2, out_channels, kernel_size, stride, padding)
+#         self.relu1    = nn.LeakyReLU(0.2)
+#         self.conv2    = torch.nn.Conv2d(out_channels, out_channels*2, kernel_size, stride, padding)
+#         self.relu2    = nn.LeakyReLU(0.2)
+#         self.conv3    = torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu3    = nn.LeakyReLU(0.2)
+#         self.conv4    = torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu4    = nn.LeakyReLU(0.2)
+#         self.conv5    = torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu5    = nn.LeakyReLU(0.2)
+#         self.conv6    = torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1)
+#         self.relu6    = nn.LeakyReLU(0.2)                 
+
+#         # Init
+#         for m in self.modules():
+#             if isinstance(m, nn.Conv2d):
+#                 nn.init.kaiming_normal_(m.weight)
+        
+#     def forward(self, input):
+#         # Move to low freq domain
+#         input = torch.fft.rfft2(input, norm='backward')
+#         input = torch.cat([input.real, input.imag], dim=1)
+        
+#         # PatchGAN
+#         input = self.relu1(self.conv1(input))
+#         input = self.relu2(self.conv2(input))
+#         input = self.relu3(self.conv3(input))
+#         input = self.relu4(self.conv4(input))
+#         input = self.relu5(self.conv5(input))
+#         input = self.relu6(self.conv6(input))
+#         input = input.view(input.size(0), -1)
+
+#         return input
+
+# class FDGAN_PatchGAN(nn.Module):
+#     def __init__(self):
+#         super(FDGAN_PatchGAN, self).__init__()
+#         # Generator
+#         self.Generator             = ResFFT_Generator()
+
+#         # Discriminator
+#         self.Image_discriminator   = Image_PatchGAN(in_channels=1, out_channels=64, kernel_size=4, stride=2, padding=1)
+#         self.Fourier_discriminator = Fourier_PatchGAN(in_channels=1, out_channels=64, kernel_size=4, stride=2, padding=1)
+        
+#         # LOSS
+#         # self.gan_metric    = nn.BCEWithLogitsLoss()
+#         self.gan_metric      = ls_gan
+        
+#         self.pixel_metric1   = CharbonnierLoss()
+#         self.pixel_metric2   = EdgeLoss()
+#         self.pixel_metric3   = MSFRLoss()        
+
+#     def normalize_gradient(self, net_D, x, **kwargs):
+#         """
+#                         f
+#         f_hat = --------------------
+#                 || grad_f || + | f |
+#         """
+#         x.requires_grad_(True)
+#         f = net_D(x, **kwargs)
+#         grad = torch.autograd.grad(f, [x], torch.ones_like(f), create_graph=True, retain_graph=True)[0]
+#         grad_norm = torch.norm(torch.flatten(grad, start_dim=1), p=2, dim=1)
+#         grad_norm = grad_norm.view(-1, *[1 for _ in range(len(f.shape) - 1)])
+#         f_hat = (f / (grad_norm + torch.abs(f)))
+#         return f_hat
+
+
+#     def train_Image_Discriminator(self, full_dose, low_dose, gen_full_dose, prefix='Img_D', n_iter=0):
+#         ############## Train Discriminator ###################
+#         img_real     = self.normalize_gradient(self.Image_discriminator, full_dose)
+#         img_fake     = self.normalize_gradient(self.Image_discriminator, gen_full_dose.detach())
+#         img_source   = self.normalize_gradient(self.Image_discriminator, low_dose)
+#         disc_loss = self.gan_metric(img_real, torch.ones_like(img_real)) + self.gan_metric(img_fake, torch.zeros_like(img_fake)) + self.gan_metric(img_source, torch.zeros_like(img_source))
+
+#         return disc_loss
+
+#     def train_Fourier_Discriminator(self, full_dose, low_dose, gen_full_dose, prefix='Fourier_D', n_iter=0):
+#         ############## Train Discriminator ###################
+#         Fourier_real     = self.normalize_gradient(self.Fourier_discriminator, full_dose)
+#         Fourier_fake     = self.normalize_gradient(self.Fourier_discriminator, gen_full_dose.detach())
+#         Fourier_source   = self.normalize_gradient(self.Fourier_discriminator, low_dose)
+#         disc_loss = self.gan_metric(Fourier_real, torch.ones_like(Fourier_real)) + self.gan_metric(Fourier_fake, torch.zeros_like(Fourier_fake)) + self.gan_metric(Fourier_source, torch.zeros_like(Fourier_source))
+        
+#         return disc_loss
+
+
+
+
+## SPECTRAL
+class Image_PatchGAN(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+        super().__init__()
+        # self.lpf_conv = FreqLayer(freq_ch=5, height=64, width=64)     
+        # self.conv_window = Window_Conv2D(mode='relu', in_channels=1, out_channels=5)      
+        
+        self.conv1    = nn.utils.spectral_norm(torch.nn.Conv2d(in_channels*5, out_channels, kernel_size, stride, padding))
+        self.relu1    = nn.LeakyReLU(0.2)
+        self.conv2    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels*2, kernel_size, stride, padding))
+        self.relu2    = nn.LeakyReLU(0.2)
+        self.conv3    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu3    = nn.LeakyReLU(0.2)
+        self.conv4    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu4    = nn.LeakyReLU(0.2)
+        self.conv5    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu5    = nn.LeakyReLU(0.2)
+        self.conv6    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu6    = nn.LeakyReLU(0.2)                
+
+        # Init
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+
+    def forward(self, input):
+        # Move to low freq domain
+        # input = self.conv_window(input)     
+        input = self.window_filter(input)
+        
+        # PatchGAN
+        input = self.relu1(self.conv1(input))
+        input = self.relu2(self.conv2(input))
+        input = self.relu3(self.conv3(input))
+        input = self.relu4(self.conv4(input))
+        input = self.relu5(self.conv5(input))
+        input = self.relu6(self.conv6(input))
+        input = input.view(input.size(0), -1)
+
+        return input
+
+
+    def window_filter(self, x):
+        weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+        weight[0, :, :, :] = 50.0
+        weight[1, :, :, :] = 31.250
+        weight[2, :, :, :] = 45.455
+        weight[3, :, :, :] = 1.464
+        weight[4, :, :, :] = 11.628
+        bias    = torch.ones(size=(5,)).cuda()        
+        bias[0] =  -12.5
+        bias[1] =  -7.687
+        bias[2] =  -11.682
+        bias[3] =  -0.081
+        bias[4] =  -2.465        
+
+        x = F.conv2d(x, weight, bias)
+        x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+        return x
+
+class Fourier_PatchGAN(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+        super().__init__()
+
+        self.conv1    = nn.utils.spectral_norm(torch.nn.Conv2d(in_channels*2, out_channels, kernel_size, stride, padding))
+        self.relu1    = nn.LeakyReLU(0.2)
+        self.conv2    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels*2, kernel_size, stride, padding))
+        self.relu2    = nn.LeakyReLU(0.2)
+        self.conv3    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu3    = nn.LeakyReLU(0.2)
+        self.conv4    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu4    = nn.LeakyReLU(0.2)
+        self.conv5    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu5    = nn.LeakyReLU(0.2)
+        self.conv6    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu6    = nn.LeakyReLU(0.2)                 
+
+        # Init
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+        
+    def forward(self, input):
+        # Move to low freq domain
+        input = torch.fft.rfft2(input, norm='backward')
+        input = torch.cat([input.real, input.imag], dim=1)
+        
+        # PatchGAN
+        input = self.relu1(self.conv1(input))
+        input = self.relu2(self.conv2(input))
+        input = self.relu3(self.conv3(input))
+        input = self.relu4(self.conv4(input))
+        input = self.relu5(self.conv5(input))
+        input = self.relu6(self.conv6(input))
+        input = input.view(input.size(0), -1)
+
+        return input
+
+class FDGAN_PatchGAN(nn.Module):
+    def __init__(self):
+        super(FDGAN_PatchGAN, self).__init__()
+        # Generator
+        self.Generator             = ResFFT_Generator()
+
+        # Discriminator
+        self.Image_discriminator   = Image_PatchGAN(in_channels=1, out_channels=64, kernel_size=4, stride=2, padding=1)
+        self.Fourier_discriminator = Fourier_PatchGAN(in_channels=1, out_channels=64, kernel_size=4, stride=2, padding=1)
+        
+        # LOSS
+        # self.gan_metric    = nn.BCEWithLogitsLoss()
+        self.gan_metric      = ls_gan
+        
+        self.pixel_metric1   = CharbonnierLoss()
+        self.pixel_metric2   = EdgeLoss()
+        self.pixel_metric3   = MSFRLoss()        
+
+
+    def train_Image_Discriminator(self, full_dose, low_dose, gen_full_dose, prefix='Img_D', n_iter=0):
+        ############## Train Discriminator ###################
+        img_real     = self.Image_discriminator(DiffAugment(full_dose))
+        img_fake     = self.Image_discriminator(DiffAugment(gen_full_dose.detach()))
+        img_source   = self.Image_discriminator(DiffAugment(low_dose))
+        disc_loss = self.gan_metric(img_real, torch.ones_like(img_real)) + self.gan_metric(img_fake, torch.zeros_like(img_fake)) + self.gan_metric(img_source, torch.zeros_like(img_source))
+
+        return disc_loss
+
+    def train_Fourier_Discriminator(self, full_dose, low_dose, gen_full_dose, prefix='Fourier_D', n_iter=0):
+        ############## Train Discriminator ###################
+        Fourier_real     = self.Fourier_discriminator(DiffAugment(full_dose))
+        Fourier_fake     = self.Fourier_discriminator(DiffAugment(gen_full_dose.detach()))
+        Fourier_source   = self.Fourier_discriminator(DiffAugment(low_dose))
+        disc_loss = self.gan_metric(Fourier_real, torch.ones_like(Fourier_real)) + self.gan_metric(Fourier_fake, torch.zeros_like(Fourier_fake)) + self.gan_metric(Fourier_source, torch.zeros_like(Fourier_source))
+        
+        return disc_loss
 
 
 
