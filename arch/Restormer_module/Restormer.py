@@ -12,6 +12,8 @@ import numbers
 from einops import rearrange
 
 
+# Reference : https://github.com/swz30/Restormer
+
 
 ##########################################################################
 ## Layer Norm
@@ -237,6 +239,9 @@ class Restormer(nn.Module):
         ###########################
             
         self.output = nn.Conv2d(int(dim*2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
+
+        # Loss
+        self.criterion = nn.L1Loss()
 
     def forward(self, inp_img):
 

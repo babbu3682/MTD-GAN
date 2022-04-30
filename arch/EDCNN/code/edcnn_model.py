@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .compound_loss import CompoundLoss
+
+# Reference: https://github.com/workingcoder/EDCNN
 
 class SobelConv2d(nn.Module):
 
@@ -83,7 +86,6 @@ class SobelConv2d(nn.Module):
 
 
 class EDCNN(nn.Module):
-
     def __init__(self, in_ch=1, out_ch=32, sobel_ch=32):
         super(EDCNN, self).__init__()
 
@@ -114,6 +116,9 @@ class EDCNN(nn.Module):
         self.conv_f8 = nn.Conv2d(out_ch, in_ch, kernel_size=3, stride=1, padding=1)
 
         self.relu = nn.LeakyReLU()
+
+        # Loss
+        self.criterion = CompoundLoss()
 
     def forward(self, x):
         out_0 = self.conv_sobel(x)

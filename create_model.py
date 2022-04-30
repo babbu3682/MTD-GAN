@@ -15,7 +15,7 @@ from arch.Markovian_Patch_GAN.networks import Markovian_Patch_GAN
 from arch.DUGAN.networks import DUGAN
 # from arch.SACNN.model import SACNN, AutoEncoder_2D
     # Ours Works
-from arch.Ours.network import *
+from arch.Ours.network import ResFFT_LFSPADE, ResFFT_Freq_SPADE_Att, FSGAN, FDGAN_PatchGAN
 
 
 

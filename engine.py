@@ -1051,13 +1051,12 @@ def test_FDGAN_PatchGAN_Ours(model, data_loader, device, save_dir):
 
 ###################################################################             Previous Works                  ###################################################################
 # CNN Based  ################################################
-# Train 
-def train_CNN_Based_Previous(model, criterion, data_loader, optimizer, device, epoch, patch_training, loss_name):
+
+def train_CNN_Based_Previous(model, data_loader, optimizer, device, epoch, patch_training, print_freq, batch_size):
     model.train(True)
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 10  
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         
@@ -1070,21 +1069,8 @@ def train_CNN_Based_Previous(model, criterion, data_loader, optimizer, device, e
             input_n_100  = batch_data['n_100'].to(device).float()
         
         pred_n_100 = model(input_n_20)
-        # print("Check = ", pred_n_100[0].max(), pred_n_100[0].min(), pred_n_100[0].dtype, pred_n_100[0].shape)
-        # print("Check = ", input_n_100.max(), input_n_100.min(), input_n_100.dtype, input_n_100.shape) # [32, 1, 64, 64]
-        if loss_name == 'Change L2 L1 Loss':
-            loss = criterion(pred_n_100, input_n_100, epoch)
 
-        elif loss_name == 'Perceptual_Triple+L1_Loss':    
-            loss = criterion(gt_low=input_n_20, gt_high=input_n_100, target=pred_n_100)            
-
-        elif loss_name == 'Window L1 Loss':    
-            loss = criterion(gt_high=input_n_100, target=pred_n_100)       
-
-        elif loss_name == 'Perceptual+L1 Loss':    
-            loss = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)       
-
-        loss_detail = None
+        loss = model.criterion(pred_n_100, input_n_100)
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -1095,82 +1081,48 @@ def train_CNN_Based_Previous(model, criterion, data_loader, optimizer, device, e
         optimizer.step()
 
         metric_logger.update(loss=loss_value)
-        if loss_detail is not None:
-            metric_logger.update(**loss_detail)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-# Valid 
 @torch.no_grad()
-def valid_CNN_Based_Previous(model, criterion, data_loader, device, epoch, save_dir, loss_name):
+def valid_CNN_Based_Previous(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
     model.eval()
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True) 
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
         
-        # print(input_n_20.shape) # (1, 1, 512, 512)
-        
-        if hasattr(model, 'module'):
-            if model.module._get_name() == "Restormer" or model.module._get_name() == "MLPMixer":
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module, overlap=0.5, mode='constant')
-            else:
-                pred_n_100 = model(input_n_20)
 
-        else :
-            if model._get_name() == "Restormer" or model._get_name() == "MLPMixer":
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
-            else:
-                pred_n_100 = model(input_n_20)
+        pred_n_100 = model(input_n_20)
 
-
-
-        if loss_name == 'Change L2 L1 Loss':
-            loss = criterion(pred_n_100, input_n_100, epoch)
-
-        elif loss_name == 'Perceptual_Triple+L1_Loss':    
-            loss = criterion(gt_low=input_n_20, gt_high=input_n_100, target=pred_n_100)            
-
-        elif loss_name == 'Window L1 Loss':    
-            loss = criterion(gt_high=input_n_100, target=pred_n_100)    
-
-        elif loss_name == 'Perceptual+L1 Loss':    
-            loss = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)       
-
-        loss_detail = None
-        loss_value = loss.item()
-
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-
-        metric_logger.update(loss=loss_value)
-        if loss_detail is not None:
-            metric_logger.update(**loss_detail)
+        L1_loss = criterion(pred_n_100, input_n_100)
+        loss_value = L1_loss.item()
+        metric_logger.update(L1_loss=loss_value)
  
-        
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
     # PNG Save
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-# TEST 
 @torch.no_grad()
 def test_CNN_Based_Previous(model, data_loader, device, save_dir):
     # switch to evaluation mode
@@ -1232,6 +1184,146 @@ def test_CNN_Based_Previous(model, data_loader, device, save_dir):
     print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
     print('\n')
     print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
+
+
+
+# Transformer Based  ################################################
+def train_Transformer_Based_Previous(model, data_loader, optimizer, device, epoch, patch_training, print_freq, batch_size):
+    model.train(True)
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Train: [epoch:{}]'.format(epoch)
+
+    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
+        
+        if patch_training: 
+            input_n_20  = torch.cat([ batch_data[i]['n_20']  for i in range(8) ]).to(device).float()  # 8 is patch_nums
+            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).to(device).float()  # (8*batch, C(=1), 64, 64) or (8*batch, C(=1), D(=3), H(=64), W(=64))
+
+        else :
+            input_n_20   = batch_data['n_20'].to(device).float()
+            input_n_100  = batch_data['n_100'].to(device).float()
+        
+        pred_n_100 = model(input_n_20)
+
+        if model._get_name() == "Restormer":
+            loss = model.criterion(pred_n_100, input_n_100)
+        elif model._get_name() == "TED_Net":
+            loss = model.criterion(pred_n_100, input_n_100)*100 + 1e-4  # to prevent 0
+
+        loss_value = loss.item()
+
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        metric_logger.update(loss=loss_value)
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def valid_Transformer_Based_Previous(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
+    model.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
+    header = 'Valid: [epoch:{}]'.format(epoch)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True) 
+
+    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
+        input_n_20   = batch_data['n_20'].to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
+        
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
+
+        L1_loss = criterion(pred_n_100, input_n_100)
+        loss_value = L1_loss.item()
+        metric_logger.update(L1_loss=loss_value)
+ 
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
+    # PNG Save
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
+
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def test_Transformer_Based_Previous(model, data_loader, device, save_dir):
+    # switch to evaluation mode
+    model.eval()
+    
+    # compute PSNR, SSIM, RMSE
+    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
+    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
+    gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
+
+    iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
+    for batch_data in iterator:
+        
+        input_n_20   = batch_data['n_20'].to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
+        
+        # Forward Generator
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
+
+
+        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+        
+        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
+        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
+        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
+        
+        # DCM Save
+        save_dicom(batch_data['path_n_20'][0],  input_n_20,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
+        save_dicom(batch_data['path_n_100'][0], input_n_100, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
+        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
+        
+        # Metric
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
+        ori_psnr_avg  += original_result[0]
+        ori_ssim_avg  += original_result[1]
+        ori_rmse_avg  += original_result[2]
+        pred_psnr_avg += pred_result[0]
+        pred_ssim_avg += pred_result[1]
+        pred_rmse_avg += pred_result[2]
+        gt_psnr_avg   += gt_result[0]
+        gt_ssim_avg   += gt_result[1]
+        gt_rmse_avg   += gt_result[2]
+
+
+        # PNG Save clip for windowing visualize
+        input_n_20    = input_n_20.clip(min=0, max=80)
+        input_n_100   = input_n_100.clip(min=0, max=80)
+        pred_n_100    = pred_n_100.clip(min=0, max=80)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
+
+    print('\n')
+    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
+    print('\n')
+    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
+    print('\n')
+    print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
+
+
+
 
 
 
@@ -1721,8 +1813,8 @@ def valid_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, ep
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
         
-        pred_n_100 = model.Generator(input_n_20)
-        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
+        # pred_n_100 = model.Generator(input_n_20) # error... caz attention.
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
             
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()

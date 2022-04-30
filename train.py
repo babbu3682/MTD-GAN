@@ -251,9 +251,18 @@ def main(args):
 
         # CNN based
             # Previous
-        if args.model_name == 'RED_CNN' or args.model_name == 'ED_CNN' or args.model_name == 'TED_Net' or args.model_name == 'Restormer': 
-            train_stats = train_CNN_Based_Previous(model, criterion, data_loader_train, optimizer, device, epoch, args.patch_training, args.criterion)
-            valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.criterion)
+        if args.model_name == 'RED_CNN' or args.model_name == 'ED_CNN': 
+            train_stats = train_CNN_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.patch_training, args.print_freq, args.batch_size)
+            print("Averaged train_stats: ", train_stats)
+            valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            print("Averaged valid_stats: ", valid_stats)
+        # Transformer based
+        elif args.model_name == 'TED_Net' or args.model_name == 'Restormer': 
+            train_stats = train_Transformer_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.patch_training, args.print_freq, args.batch_size)
+            print("Averaged train_stats: ", train_stats)
+            valid_stats = valid_Transformer_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            print("Averaged valid_stats: ", valid_stats)
+
 
             # Ours
         elif args.model_name == 'ResFFT_LFSPADE' or args.model_name == 'ResFFT_Freq_SPADE_Att' or args.model_name == 'ResFFT_Freq_SPADE_Att_window':

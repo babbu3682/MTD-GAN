@@ -1,6 +1,8 @@
-import os
-import numpy as np
 import torch.nn as nn
+
+
+# Reference : https://github.com/SSinyu/RED-CNN
+
 
 class RED_CNN(nn.Module):
     def __init__(self, out_ch=96):
@@ -18,6 +20,9 @@ class RED_CNN(nn.Module):
         self.tconv5 = nn.ConvTranspose2d(out_ch, 1, kernel_size=5, stride=1, padding=0)
 
         self.relu = nn.ReLU()
+
+        # Loss
+        self.criterion = nn.MSELoss()
 
     def forward(self, x):
         # encoder

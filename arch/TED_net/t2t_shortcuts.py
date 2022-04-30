@@ -16,6 +16,10 @@ from .token_performer import Token_performer
 from .T2T_transformer_block import Block, get_sinusoid_encoding
 
 
+# Reference : https://github.com/wdayang/CTformer
+
+
+
 class MultiHeadDense(nn.Module):
     def __init__(self, in_ch, out_ch):
         super(MultiHeadDense, self).__init__()
@@ -191,6 +195,10 @@ class TED_Net(nn.Module):
 
         trunc_normal_(self.cls_token, std=.02)
         self.apply(self._init_weights)
+
+        # Loss
+        self.criterion = nn.MSELoss()        
+        # loss = self.criterion(pred, y)*100 + 1e-4  ## to prevent 0
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):

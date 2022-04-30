@@ -49,7 +49,7 @@ class CompoundLoss(_Loss):
         self.resnet_weight = resnet_weight
 
         self.blocks = blocks
-        self.model = ResNet50FeatureExtractor(pretrained=True)
+        self.model  = ResNet50FeatureExtractor(pretrained=True)
 
         if torch.cuda.is_available():
             self.model = self.model.cuda()
@@ -60,7 +60,7 @@ class CompoundLoss(_Loss):
     def forward(self, input, target):
         loss_value = 0
 
-        input_feats = self.model(torch.cat([input, input, input], dim=1))
+        input_feats  = self.model(torch.cat([input, input, input], dim=1))
         target_feats = self.model(torch.cat([target, target, target], dim=1))
 
         feats_num = len(self.blocks)
