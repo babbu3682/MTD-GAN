@@ -4,13 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-def init_weights(module):
-    print("inintializing...!")
-    for m in module.modules():
-        if isinstance(m, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
-            nn.init.xavier_uniform_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
+# Reference : https://github.com/hmshan/MAP-NN/blob/f7a24be1981314b78f21d519ed330d6c7326d1f0/models.py
+# But it was tensorflow version...
 
 
 class CPCE_2D(nn.Module):
@@ -34,7 +29,8 @@ class CPCE_2D(nn.Module):
         self.decoder8  = nn.ConvTranspose2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=0, bias=False)
 
         # Initialize by xavier_uniform_
-        self.apply(init_weights)
+        # self.apply(self.init_weights)
+        self.init_weights()
 
     def forward(self, x):
         # x shape is (B, C, H, W)
@@ -72,6 +68,13 @@ class CPCE_2D(nn.Module):
 
         return x
 
+    def init_weights(self):
+        print("inintializing...!")
+        for m in self.modules():
+            if isinstance(m, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
 '''
 MAP-NN 
@@ -89,18 +92,7 @@ class MAP_NN_Generator(nn.Module):
         for _ in range(self.depth):
             x = self.CPCE_2D(x)
         return x
-
-    def inference(self, x):
-        self.eval()
-        with torch.no_grad():
-            results = [x, ]
-            for _ in range(self.depth):
-                x = self.CPCE_2D(x)
-                results.append(x)
-
-            return results        
-
-
+  
 
 class MAP_NN_Discriminator(nn.Module):
     def __init__(self):
@@ -166,7 +158,6 @@ class SobelOperator(nn.Module):
 
         return x
 
-
 class MAP_NN(nn.Module):
     # referred from https://github.com/kuc2477/pytorch-wgan-gp
     def __init__(self):
@@ -188,9 +179,8 @@ class MAP_NN(nn.Module):
         gradient_penalty = ((gradients.norm(2, dim=1) -1)**2).mean() * lambda_
         return gradient_penalty
 
-
     def d_loss(self, x, y, gp=True, return_gp=False):
-        fake   = self.Generator(x)
+        fake   = self.Generator(x).detach()
         d_real = self.Discriminator(y)
         d_fake = self.Discriminator(fake)
         d_loss = -torch.mean(d_real) + torch.mean(d_fake)

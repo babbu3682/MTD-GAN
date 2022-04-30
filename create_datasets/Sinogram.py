@@ -77,250 +77,240 @@ from torchvision import transforms as vision_transforms
 
 
 
-def Sinogram_Dataset_DCM(mode, patch_training, multiple_GT):
-    if multiple_GT:
-        if mode == 'train':
-            n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/20/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/20/*/*/*.dcm'))
-            n_40_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/40/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/40/*/*/*.dcm'))
-            n_60_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/60/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/60/*/*/*.dcm'))
-            n_80_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/80/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/80/*/*/*.dcm'))
-            n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/X/*/*/*.dcm'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/X/*/*/*.dcm'))
+def Sinogram_Dataset_DCM(mode, patch_training):
+    if mode == 'train':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/20/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/20/*/*/*.dcm'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/X/*/*/*.dcm'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/X/*/*/*.dcm'))
 
-            files = [{"n_20": n_20, "n_40": n_40, "n_60": n_60, "n_80": n_80, "n_100": n_100} for n_20, n_40, n_60, n_80, n_100 in zip(n_20_imgs, n_40_imgs, n_60_imgs, n_80_imgs, n_100_imgs)]            
-            print("Train [Total]  number = ", len(n_20_imgs))
+        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]            
+        print("Train [Total]  number = ", len(n_20_imgs))
 
-            # CT에 맞는 Augmentation
-            if patch_training:
-                transforms = Compose(
-                    [
-                        Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=get_pixels_hu),
-                        Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=dicom_normalize),
-                        AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),                 
-
-                        # Crop  
-                        # RandWeightedCropd(keys=["image"], w_key=["image"], spatial_size=(512,512,1), num_samples=1),
-                        # RandSpatialCropd(keys=["image"], roi_size=(512, 512), random_size=False, random_center=True),
-                        # RandSpatialCropd(keys=["image"], roi_size=(512,512,3), random_size=False, random_center=True),
-                        RandSpatialCropSamplesd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
-                            # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
-
-                        # (45 degree rotation, vertical & horizontal flip & scaling)
-                        RandFlipd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                        RandRotated(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                        RandZoomd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
-
-                        # Normalize
-                        # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                 
-                        ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
-                    ]
-                )  
-
-            else :
-                transforms = Compose(
-                    [
-                        Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=get_pixels_hu),
-                        Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=dicom_normalize),
-                        AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),                 
-
-                        # (45 degree rotation, vertical & horizontal flip & scaling)
-                        RandFlipd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                        RandRotated(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                        RandZoomd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
-
-                        # Normalize
-                        # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
-                        ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
-                    ]
-                )              
-
-        elif mode == 'valid':
-            n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/20/*/*/*.dcm'))
-            n_40_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/40/*/*/*.dcm'))
-            n_60_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/60/*/*/*.dcm'))
-            n_80_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/80/*/*/*.dcm'))
-            n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/X/*/*/*.dcm'))        
-
-            files = [{"n_20": n_20, "n_40": n_40, "n_60": n_60, "n_80": n_80, "n_100": n_100} for n_20, n_40, n_60, n_80, n_100 in zip(n_20_imgs, n_40_imgs, n_60_imgs, n_80_imgs, n_100_imgs)]            
-            print("Valid [Total]  number = ", len(n_20_imgs))
-
-            # CT에 맞는 Augmentation
-            transforms = Compose(
-                [
-                    Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=get_pixels_hu),
-                    Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=dicom_normalize),
-                    AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),     
-
-                    # Normalize
-                    # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
-                    ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
-                ]
-            )    
-        
-        else :
-            print('Error...!')
-
-    else:
-        if mode == 'train':
-            n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/20/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/20/*/*/*.dcm'))
-            n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/X/*/*/*.dcm'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/X/*/*/*.dcm'))
-
-            files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]            
-            print("Train [Total]  number = ", len(n_20_imgs))
-
-            # CT에 맞는 Augmentation
-            if patch_training:
-                transforms = Compose(
-                    [
-                        Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                        Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-                        AddChanneld(keys=["n_20", "n_100"]),                 
-
-                        # Crop  
-                        RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
-                            # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
-
-                        # (45 degree rotation, vertical & horizontal flip & scaling)
-                        RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                        RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                        RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
-
-                        # Normalize
-                        # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
-                        ToTensord(keys=["n_20", "n_100"]),
-                    ]
-                )  
-
-            else :
-                transforms = Compose(
-                    [
-                        Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                        Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-                        AddChanneld(keys=["n_20", "n_100"]),                 
-
-                        # (45 degree rotation, vertical & horizontal flip & scaling)
-                        RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                        RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                        RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
-                        
-                        # Normalize
-                        # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
-                        ToTensord(keys=["n_20", "n_100"]),
-                    ]
-                )              
-
-        elif mode == 'valid':
-            n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/20/*/*/*.dcm'))
-            n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/X/*/*/*.dcm'))        
-
-            files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
-            print("Valid [Total]  number = ", len(n_20_imgs))
-
-            # CT에 맞는 Augmentation
+        if patch_training:
             transforms = Compose(
                 [
                     Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
                     Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-                    AddChanneld(keys=["n_20", "n_100"]),     
+                    AddChanneld(keys=["n_20", "n_100"]),    
 
+                    # Crop  
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                        # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
+
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
+
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
+                    ToTensord(keys=["n_20", "n_100"]),
+                ]
+            )  
+
+        else :
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_100"]),                 
+
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
+                    
                     # Normalize
                     # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
                     ToTensord(keys=["n_20", "n_100"]),
                 ]
-            )    
-        
-        else :
-            print('Error...!')
+            )       
+
+
+    elif mode == 'valid':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/20/*/*/*.dcm'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/X/*/*/*.dcm'))        
+
+        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
+        print("Valid [Total]  number = ", len(n_20_imgs))
+
+        # CT에 맞는 Augmentation
+        transforms = Compose(
+            [
+                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                AddChanneld(keys=["n_20", "n_100"]),     
+
+                # Normalize
+                # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
+                ToTensord(keys=["n_20", "n_100"]),
+            ]
+        )    
+
 
     return Dataset(data=files, transform=transforms), default_collate_fn
 
-def Sinogram_Dataset_NII(mode, patch_training, multiple_GT):
+def Sinogram_Dataset_DCM_Windowing(mode, patch_training):
     if mode == 'train':
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Train/*/20/*/*/*.nii.gz')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Valid/*/20/*/*/*.nii.gz'))
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Train/*/X/*/*/*.nii.gz'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Valid/*/X/*/*/*.nii.gz'))
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/20/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/20/*/*/*.dcm'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/X/*/*/*.dcm'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/X/*/*/*.dcm'))
+
+        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]            
+        print("Train [Total]  number = ", len(n_20_imgs))
+
+        if patch_training:
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+                    AddChanneld(keys=["n_20", "n_100"]),    
+                    
+                    # Crop  
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                        # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
+
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
+
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
+                    ToTensord(keys=["n_20", "n_100"]),
+                ]
+            )  
+
+
+
+        else :
+            transforms = Compose(
+                [
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+                    AddChanneld(keys=["n_20", "n_100"]),                 
+
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
+                    
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
+                    ToTensord(keys=["n_20", "n_100"]),
+                ]
+            )              
+
+    elif mode == 'valid':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/20/*/*/*.dcm'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/X/*/*/*.dcm'))        
 
         files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
-          
+        print("Valid [Total]  number = ", len(n_20_imgs))
+
+        # CT에 맞는 Augmentation
+        transforms = Compose(
+            [
+                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+                AddChanneld(keys=["n_20", "n_100"]),     
+
+                # Normalize
+                # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
+                ToTensord(keys=["n_20", "n_100"]),
+            ]
+        )    
+
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
+
+def Sinogram_Dataset_DCM_Multiple_GT(mode, patch_training):
+    if mode == 'train':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/20/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/20/*/*/*.dcm'))
+        n_40_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/40/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/40/*/*/*.dcm'))
+        n_60_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/60/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/60/*/*/*.dcm'))
+        n_80_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/80/*/*/*.dcm')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/80/*/*/*.dcm'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Train/*/X/*/*/*.dcm'))  + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Valid/*/X/*/*/*.dcm'))
+
+        files = [{"n_20": n_20, "n_40": n_40, "n_60": n_60, "n_80": n_80, "n_100": n_100} for n_20, n_40, n_60, n_80, n_100 in zip(n_20_imgs, n_40_imgs, n_60_imgs, n_80_imgs, n_100_imgs)]            
         print("Train [Total]  number = ", len(n_20_imgs))
 
         # CT에 맞는 Augmentation
         if patch_training:
             transforms = Compose(
                 [
-                    LoadImaged(keys=["n_20", "n_100"]),
-                    AddChanneld(keys=["n_20", "n_100"]),                 
-                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),       # 보통 먼저 normalize 하고 aug 하는 경우가 있음 ref: REDCNN
-
-                    # Align
-                    Flipd(keys=["n_20", "n_100"], spatial_axis=1),
-                    Rotate90d(keys=["n_20", "n_100"], k=1, spatial_axes=(0, 1)),          
+                    Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),                 
 
                     # Crop  
                     # RandWeightedCropd(keys=["image"], w_key=["image"], spatial_size=(512,512,1), num_samples=1),
-                    # RandSpatialCropd(keys=["image"], roi_size=(512, 512), random_size=False, random_center=True),
-                    # RandSpatialCropd(keys=["image"], roi_size=(512,512,3), random_size=False, random_center=True),
-
-                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64, 3), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
-                    # for SACNN num_samples down to 4....
-                    # RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64, 3), num_samples=2, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                    RandSpatialCropSamplesd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
                         # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
 
-                    # (45 degree rotation, vertical & horizontal flip & scaling)
-                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                    RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
 
-                    ToTensord(keys=["n_20", "n_100"]),
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                 
+                    ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
                 ]
-            )    
+            )  
+
         else :
             transforms = Compose(
                 [
-                    LoadImaged(keys=["n_20", "n_100"]),
-                    AddChanneld(keys=["n_20", "n_100"]),                 
-                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),       # 보통 먼저 normalize 하고 aug 하는 경우가 있음 ref: REDCNN             
+                    Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=get_pixels_hu),
+                    Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),                 
 
-                    # Align
-                    Flipd(keys=["n_20", "n_100"], spatial_axis=1),
-                    Rotate90d(keys=["n_20", "n_100"], k=1, spatial_axes=(0, 1)),  
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
 
-                    # (45 degree rotation, vertical & horizontal flip & scaling)
-                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                    RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
-
-                    ToTensord(keys=["n_20", "n_100"]),
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
+                    ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
                 ]
             )              
 
     elif mode == 'valid':
-        # n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Valid/*/20/*/*/*.nii.gz'))
-        # n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Valid/*/X/*/*/*.nii.gz'))
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Sample/20/*/*/*.nii.gz'))        
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Sample/X/*/*/*.nii.gz'))        
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/20/*/*/*.dcm'))
+        n_40_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/40/*/*/*.dcm'))
+        n_60_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/60/*/*/*.dcm'))
+        n_80_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/80/*/*/*.dcm'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/X/*/*/*.dcm'))        
 
-        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
-          
+        files = [{"n_20": n_20, "n_40": n_40, "n_60": n_60, "n_80": n_80, "n_100": n_100} for n_20, n_40, n_60, n_80, n_100 in zip(n_20_imgs, n_40_imgs, n_60_imgs, n_80_imgs, n_100_imgs)]            
         print("Valid [Total]  number = ", len(n_20_imgs))
 
         # CT에 맞는 Augmentation
         transforms = Compose(
             [
-                LoadImaged(keys=["n_20", "n_100"]),
-                AddChanneld(keys=["n_20", "n_100"]),                 
-                Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),       # 보통 먼저 normalize 하고 aug 하는 경우가 있음 ref: REDCNN             
+                Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=get_pixels_hu),
+                Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=dicom_normalize),
+                AddChanneld(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),     
 
-                # Align
-                Flipd(keys=["n_20", "n_100"], spatial_axis=1),
-                Rotate90d(keys=["n_20", "n_100"], k=1, spatial_axes=(0, 1)),  
-
-                ToTensord(keys=["n_20", "n_100"]),
+                # Normalize
+                # Lambdad(keys=["n_20", "n_40", "n_60", "n_80", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
+                ToTensord(keys=["n_20", "n_40", "n_60", "n_80", "n_100"]),
             ]
         )    
-    
-    else: 
-        raise Exception('Error...! mode')
+        
 
     return Dataset(data=files, transform=transforms), default_collate_fn
+
+
+
+
+
 
 def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
     if mode == 'train':
@@ -379,10 +369,11 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
                     RandSpatialCropSamplesd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
                         # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
 
-                    # (45 degree rotation, vertical & horizontal flip & scaling)
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
                     RandFlipd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                    RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                    RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
                     
                     # Normalize
                     # Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
@@ -397,10 +388,11 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
                     Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
                     AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),                 
 
-                    # (45 degree rotation, vertical & horizontal flip & scaling)
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
                     RandFlipd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                    RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/4, range_y=np.pi/4, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                    RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.5, max_zoom=2.0, align_corners=None, keep_size=True, allow_missing_keys=False),
+                    RandRotated(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+                    # RandZoomd(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
 
                     # Normalize
                     # Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
@@ -559,57 +551,6 @@ def TEST_Sinogram_Dataset_DCM():
     )        
 
     return Dataset(data=files, transform=transforms), default_collate_fn
-
-def TEST_Sinogram_Dataset_NII(range_minus1_plus1=False):
-
-    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Test/*/20/*/*/*.nii.gz'))
-    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NII/Test/*/X/*/*/*.nii.gz'))
-
-    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
-        
-    print("TEST [Total]  number = ", len(low_imgs))
-
-    if range_minus1_plus1:
-        transforms = Compose(
-            [
-                LoadImaged(keys=["n_20", "n_100"]),
-                AddChanneld(keys=["n_20", "n_100"]),                 
-                Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),       # 보통 먼저 normalize 하고 aug 하는 경우가 있음 ref: REDCNN             
-
-                # Align
-                Flipd(keys=["n_20", "n_100"], spatial_axis=1),
-                Rotate90d(keys=["n_20", "n_100"], k=1, spatial_axes=(0, 1)),  
-
-                ToTensord(keys=["n_20", "n_100"]),
-
-                # Unet_with_perceptual Option
-                Lambdad(keys=["n_20", "n_100"], func=vision_transforms.Normalize(mean=(0.5), std=(0.5))),
-            ]
-        )            
-    else:            
-        transforms = Compose(
-            [
-                LoadImaged(keys=["n_20", "n_100"]),
-                AddChanneld(keys=["n_20", "n_100"]),                 
-                Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),       # 보통 먼저 normalize 하고 aug 하는 경우가 있음 ref: REDCNN             
-
-                # Align
-                Flipd(keys=["n_20", "n_100"], spatial_axis=1),
-                Rotate90d(keys=["n_20", "n_100"], k=1, spatial_axes=(0, 1)),  
-
-                # Normalize
-                # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
-                ToTensord(keys=["n_20", "n_100"]),
-            ]
-        )    
-
-
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
-
-
-
-
 
 def TEST_Sinogram_Dataset_DCM_SACNN():
     low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/'))

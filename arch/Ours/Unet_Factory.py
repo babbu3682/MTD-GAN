@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 # import torch.fft as fft
 
-from skip_attention import SkipAttentionBlock, SCSEModule
+from arch.Ours.skip_attention import SkipAttentionBlock, SCSEModule
 
 # PixelUnshuffle can be used only from torch == 1.8.0 version
 

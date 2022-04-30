@@ -7,9 +7,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from timm.models.helpers import load_pretrained
-from timm.models.registry import register_model
-from timm.models.layers import trunc_normal_
+from arch.timm.models.helpers import load_pretrained
+from arch.timm.models.registry import register_model
+from arch.timm.models.layers import trunc_normal_
 
 from .token_transformer import Token_transformer    ## currently did not use this part
 from .token_performer import Token_performer

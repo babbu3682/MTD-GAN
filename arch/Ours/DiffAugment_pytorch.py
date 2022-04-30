@@ -4,31 +4,41 @@
 
 import torch
 import torch.nn.functional as F
+from kornia.enhance import equalize, equalize_clahe
+from kornia.geometry.transform import rotate
+import random
 
 
-def DiffAugment(x, policy='color,translation,cutout', channels_first=True):
+
+
+
+
+def DiffAugment(x, policy='translation,cutout,equalize,rotate', channels_first=True):
     if policy:
         if not channels_first:
             x = x.permute(0, 3, 1, 2)
         for p in policy.split(','):
             for f in AUGMENT_FNS[p]:
-                x = f(x)
+                if random.random() <= 0.5:
+                    x = f(x)
         if not channels_first:
             x = x.permute(0, 2, 3, 1)
         x = x.contiguous()
     return x
 
 
+
+
+
+# color
 def rand_brightness(x):
     x = x + (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device) - 0.5)
     return x
-
 
 def rand_saturation(x):
     x_mean = x.mean(dim=1, keepdim=True)
     x = (x - x_mean) * (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device) * 2) + x_mean
     return x
-
 
 def rand_contrast(x):
     x_mean = x.mean(dim=[1, 2, 3], keepdim=True)
@@ -36,6 +46,8 @@ def rand_contrast(x):
     return x
 
 
+
+# translatoion
 def rand_translation(x, ratio=0.125):
     shift_x, shift_y = int(x.size(2) * ratio + 0.5), int(x.size(3) * ratio + 0.5)
     translation_x = torch.randint(-shift_x, shift_x + 1, size=[x.size(0), 1, 1], device=x.device)
@@ -52,7 +64,9 @@ def rand_translation(x, ratio=0.125):
     return x
 
 
-def rand_cutout(x, ratio=0.5):
+
+# cutout
+def rand_cutout(x, ratio=0.35):
     cutout_size = int(x.size(2) * ratio + 0.5), int(x.size(3) * ratio + 0.5)
     offset_x = torch.randint(0, x.size(2) + (1 - cutout_size[0] % 2), size=[x.size(0), 1, 1], device=x.device)
     offset_y = torch.randint(0, x.size(3) + (1 - cutout_size[1] % 2), size=[x.size(0), 1, 1], device=x.device)
@@ -69,8 +83,52 @@ def rand_cutout(x, ratio=0.5):
     return x
 
 
+# equalize
+# def rand_equalize(x, sw_prob=0.5):
+#     if random.random() <= sw_prob:
+#         x = equalize(x)
+#     else:
+#         x = equalize_clahe(x, clip_limit=2.0, grid_size=(8, 8), slow_and_differentiable=True)
+#     return x
+
+def rand_equalize(x):
+    clahe_index = random.randint(0, 2)
+
+    if clahe_index == 0:
+        x = equalize_clahe(x, clip_limit=2.0, grid_size=(4, 4), slow_and_differentiable=True)
+
+    elif clahe_index == 1:
+        x = equalize_clahe(x, clip_limit=2.0, grid_size=(8, 8), slow_and_differentiable=True)
+
+    else :
+        x = equalize_clahe(x, clip_limit=2.0, grid_size=(16, 16), slow_and_differentiable=True)
+        
+    return x
+
+
+
+# 90 rotate
+def rand_rotate(x):
+    rot_index = random.randint(0, 2)
+    
+    if rot_index == 0:
+        x = rotate(tensor=x, angle=torch.tensor([90.]*x.size(0)).cuda(), center=None, mode='bilinear', padding_mode='zeros', align_corners=True)
+
+    elif rot_index == 1:
+        x = rotate(tensor=x, angle=torch.tensor([180.]*x.size(0)).cuda(), center=None, mode='bilinear', padding_mode='zeros', align_corners=True)
+
+    else :
+        x = rotate(tensor=x, angle=torch.tensor([270.]*x.size(0)).cuda(), center=None, mode='bilinear', padding_mode='zeros', align_corners=True)
+
+    return x
+
+
+
+
 AUGMENT_FNS = {
     'color': [rand_brightness, rand_saturation, rand_contrast],
     'translation': [rand_translation],
     'cutout': [rand_cutout],
+    'equalize': [rand_equalize],
+    'rotate': [rand_rotate],
 }

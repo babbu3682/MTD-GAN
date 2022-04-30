@@ -4,7 +4,7 @@ from math import exp
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from pytorch_ssim_3d import SSIM3D
+from module.pytorch_ssim_3d import SSIM3D
 
 
 # Ref: https://github.com/SSinyu/WGAN-VGG/blob/d9af4a2cf6d1f4271546e0c01847bbc38d13b910/metric.py#L7

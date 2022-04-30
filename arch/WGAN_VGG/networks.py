@@ -1,9 +1,10 @@
-import os
 import numpy as np
 import torch
 import torch.nn as nn
-from collections import OrderedDict
 from torchvision.models import vgg19
+
+#  Reference: https://github.com/SSinyu/WGAN-VGG/blob/master/networks.py
+#  But it has a few error lines.
 
 
 class WGAN_VGG_Generator(nn.Module):
@@ -45,8 +46,9 @@ class WGAN_VGG_Discriminator(nn.Module):
         self.output_size = conv_output_size(input_size, [3]*6, [1,2]*3)
         self.net = nn.Sequential(*layers)
         self.fc1 = nn.Linear(256*self.output_size*self.output_size, 1024)
-        self.fc2 = nn.Linear(1024, 1)
         self.lrelu = nn.LeakyReLU()
+        self.fc2 = nn.Linear(1024, 1)
+        
 
     def forward(self, x):
         out = self.net(x)
@@ -59,17 +61,15 @@ class WGAN_VGG_Discriminator(nn.Module):
 class WGAN_VGG_FeatureExtractor(nn.Module):
     def __init__(self):
         super(WGAN_VGG_FeatureExtractor, self).__init__()
-        vgg19_model = vgg19(pretrained=True)
-        self.feature_extractor = nn.Sequential(*list(vgg19_model.features.children())[:35])
+        self.feature_extractor = nn.Sequential(*list(vgg19(pretrained=True).features.children())[:35])
+        # for fixed feat extractor
+        for param in self.parameters():
+            param.requires_grad = False
 
-    # def forward(self, x):
-    #     self.feature_extractor.eval()
-    #     with torch.no_grad():
-    #         out = self.feature_extractor(x)
-    #     return out
     def forward(self, x):
         out = self.feature_extractor(x)
         return out
+
 
 class WGAN_VGG(nn.Module):
     # referred from https://github.com/kuc2477/pytorch-wgan-gp
@@ -78,45 +78,45 @@ class WGAN_VGG(nn.Module):
         self.Generator         = WGAN_VGG_Generator()
         self.Discriminator     = WGAN_VGG_Discriminator(input_size)
         self.feature_extractor = WGAN_VGG_FeatureExtractor()
-        self.p_criterion       = nn.L1Loss()
+        self.p_criterion       = nn.MSELoss()
 
     def d_loss(self, x, y, gp=True, return_gp=False):
-        fake   = self.Generator(x)
-        d_real = self.Discriminator(y)
+        fake   = self.Generator(x).detach()   # fixed this line.
         d_fake = self.Discriminator(fake)
-
-        print("check == ", y.shape, fake.shape)
-
+        d_real = self.Discriminator(y)
+        
         d_loss = -torch.mean(d_real) + torch.mean(d_fake)
+
         if gp:
             gp_loss = self.gp(y, fake)
             loss = d_loss + gp_loss
         else:
             gp_loss = None
             loss = d_loss
+
         return (loss, gp_loss) if return_gp else loss
 
     def g_loss(self, x, y, perceptual=True, return_p=False):
         fake   = self.Generator(x)
         d_fake = self.Discriminator(fake)
+
         g_loss = -torch.mean(d_fake)
+
         if perceptual:
-            p_loss = self.p_loss(x, y)
+            p_loss = self.p_loss(fake=fake, real=y)
             loss = g_loss + (0.1 * p_loss)
         else:
             p_loss = None
             loss = g_loss
         return (loss, p_loss) if return_p else loss
 
-    def p_loss(self, x, y):
-        fake = self.Generator(x).repeat(1,3,1,1)
-        real = y.repeat(1,3,1,1)
-        fake_feature = self.feature_extractor(fake)
-        real_feature = self.feature_extractor(real)
+    def p_loss(self, fake, real):
+        fake_feature = self.feature_extractor(fake.repeat(1,3,1,1))
+        real_feature = self.feature_extractor(real.repeat(1,3,1,1))
         loss = self.p_criterion(fake_feature, real_feature)
         return loss
 
-    def gp(self, y, fake, lambda_=10):
+    def gp(self, y, fake, lambda_=10.0):
         assert y.size() == fake.size()
         a = torch.cuda.FloatTensor(np.random.random((y.size(0), 1, 1, 1)))
         interp = (a*y + ((1-a)*fake)).requires_grad_(True)

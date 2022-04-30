@@ -1,21 +1,22 @@
+
 import torch
 import math
 import functools
 from torch.optim.lr_scheduler import _LRScheduler
 
 
-
-def lambda_rule(epoch, warmup_epoch, start_decay_epoch, total_epoch, init_warmup_lr, init_lr, min_lr):
-    # Linear WarmUP
-    if (epoch < warmup_epoch):
-        return max(init_warmup_lr / init_lr, epoch / warmup_epoch)
+def poly_learning_rate(epoch, warm_up_epoch, start_decay_epoch, total_epoch, min_lr):
+    # Linear Warmup
+    if (epoch < warm_up_epoch):
+        return max(0, epoch / warm_up_epoch)
     else :
-        lr_ratio = 1.0 - max(0, epoch - start_decay_epoch) /(float(total_epoch) - start_decay_epoch)
+        lr = 1.0 - max(0, epoch - start_decay_epoch) /(float(total_epoch) - start_decay_epoch)
 
-        if init_lr*lr_ratio <= min_lr:
-            lr_ratio = min_lr / init_lr
+        if lr <= min_lr:
+            lr = min_lr
 
-        return lr_ratio
+    return lr
+
 
 class CosineAnnealingWarmUpRestarts(_LRScheduler):
     def __init__(self, optimizer, T_0, T_mult=1, eta_max=0.1, T_up=0, gamma=1., last_epoch=-1):
@@ -75,8 +76,8 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
 
 
 def create_scheduler(name, optimizer, args):
-    if name == 'lambda':
-        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=functools.partial(lambda_rule, warmup_epoch=10, start_decay_epoch=args.epochs/10, total_epoch=args.epochs, init_warmup_lr=1e-8, init_lr=args.lr, min_lr=5e-6))    
+    if name == 'poly_lr':
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=functools.partial(poly_learning_rate, warm_up_epoch=args.warmup_epochs, start_decay_epoch=args.epochs/10, total_epoch=args.epochs, min_lr=args.min_lr))            
 
     elif name == 'cosine_annealing_warm_restart':
         # optimizer에서 시작할 learning rate를 일반적으로 사용하는 learning rate가 아닌 0에 가까운 아주 작은 값을 입력해야 합니다.
@@ -87,7 +88,11 @@ def create_scheduler(name, optimizer, args):
         # T_up -> warm_up시 필요한 epoch
         # gamma -> 몇 퍼센트 살릴지 0.6 이면, 다음 lr = 0.6 * 현재 lr
         # lr => 최소 learning rate 때문에 작게 설정해야한다!
-
+        
         lr_scheduler = CosineAnnealingWarmUpRestarts(optimizer, T_0=100, T_mult=1, eta_max=0.001,  T_up=10, gamma=0.6)
+
+    else :
+        raise KeyError("Wrong scheduler name `{}`".format(name))        
+
 
     return lr_scheduler

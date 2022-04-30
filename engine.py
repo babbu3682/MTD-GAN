@@ -12,7 +12,7 @@ import os
 import matplotlib.pyplot as plt
 from metrics import compute_measure, compute_measure_3D
 from monai.inferers import sliding_window_inference
-from sliding_window_inference_SACNN import sliding_window_inference_sacnn
+from module.sliding_window_inference_SACNN import sliding_window_inference_sacnn
 
 
 def dicom_denormalize(image, MIN_HU=-1024.0, MAX_HU=3072.0):
@@ -895,11 +895,12 @@ def train_FDGAN_PatchGAN_Ours(model, data_loader, optimizer_G, optimizer_Image_D
         
             # Low
         image_gen          = model.Image_discriminator(gen_full_dose)
+        # image_gen_loss     = model.gan_metric(image_gen[0], torch.ones_like(image_gen[0]))
         image_gen_loss     = model.gan_metric(image_gen, torch.ones_like(image_gen))
+        
             # High
         fourier_gen        = model.Fourier_discriminator(gen_full_dose)
         fourier_gen_loss   = model.gan_metric(fourier_gen, torch.ones_like(fourier_gen)) 
-
 
 
         adv_loss   = 0.1*image_gen_loss + 0.1*fourier_gen_loss 
@@ -947,14 +948,15 @@ def valid_FDGAN_PatchGAN_Ours(model, criterion, data_loader, device, epoch, save
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
-    
+
+
         if hasattr(model, 'module'):
-            pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module.Generator, overlap=0.5, mode='constant')
-            # pred_n_100 = model.Generator(input_n_20)     
+            # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module.Generator, overlap=0.5, mode='constant')
+            pred_n_100 = model.Generator(input_n_20)     
 
         else :
-            pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')     
-            # pred_n_100 = model.Generator(input_n_20)     
+            # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')     
+            pred_n_100 = model.Generator(input_n_20)     
 
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()
@@ -1235,14 +1237,12 @@ def test_CNN_Based_Previous(model, data_loader, device, save_dir):
 
 # GAN Based  ################################################
 # 1.WGAN
-def train_WGAN_VGG_Previous(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training):
+def train_WGAN_VGG_Previous(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training, print_freq, batch_size):
     model.Generator.train(True)
     model.Discriminator.train(True)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 10  
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         
@@ -1254,40 +1254,33 @@ def train_WGAN_VGG_Previous(model, data_loader, optimizer_G, optimizer_D, device
             input_n_20   = batch_data['n_20'].to(device).float()
             input_n_100  = batch_data['n_100'].to(device).float()
         
-        # print("Check = ", input_n_20.max(), input_n_20.min(), input_n_20.dtype, input_n_20.shape)
-
         # Discriminator, 4 time more training than Generator
         optimizer_D.zero_grad()
-        model.Discriminator.zero_grad()  # Same as optimizer zero grad()
+        model.Discriminator.zero_grad()  
         for _ in range(4):
             d_loss, gp_loss = model.d_loss(input_n_20, input_n_100, gp=True, return_gp=True)
             d_loss.backward()
             optimizer_D.step()
+            metric_logger.update(d_loss=d_loss, gp_loss=gp_loss)
 
-        # Generator, perceptual loss
+        # Generator 
         optimizer_G.zero_grad()
-        model.Generator.zero_grad()     # Same as optimizer zero grad()
+        model.Generator.zero_grad()     
         g_loss, p_loss = model.g_loss(input_n_20, input_n_100, perceptual=True, return_p=True)
         g_loss.backward()
         optimizer_G.step()
-        
-        metric_logger.update(g_loss=g_loss, d_loss=d_loss, p_loss=p_loss, gp_loss=gp_loss)
+        metric_logger.update(g_loss=g_loss, p_loss=p_loss)
+
         metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
         
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def valid_WGAN_VGG_Previous(model, criterion, data_loader, device, epoch, save_dir):
+def valid_WGAN_VGG_Previous(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
     model.Generator.eval()
-    model.Discriminator.eval()
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True)
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -1299,26 +1292,164 @@ def valid_WGAN_VGG_Previous(model, criterion, data_loader, device, epoch, save_d
         loss_value = L1_loss.item()
         metric_logger.update(L1_loss=loss_value)
 
-    # print("Check == ", pred_n_100.shape, pred_n_100.max(), pred_n_100.min())
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
 
-    # Denormalize
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
     # PNG Save
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def test_WGAN_VGG_Previous(model, data_loader, device, save_dir):
+def test_WGAN_VGG_Previous(model, data_loader, device, png_save_dir):
+    # switch to evaluation mode
+    model.Generator.eval()
+    
+    # compute PSNR, SSIM, RMSE
+    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
+    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
+    gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
+
+    for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50):
+        
+        input_n_20   = batch_data['n_20'].to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
+        
+        # Forward Generator
+        pred_n_100 = model.Generator(input_n_20)
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
+
+        os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+        
+        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
+        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
+        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
+        
+        # DCM Save
+        save_dicom(batch_data['path_n_20'][0],  input_n_20,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
+        save_dicom(batch_data['path_n_100'][0], input_n_100, png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
+        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
+        
+        # Metric
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
+        ori_psnr_avg  += original_result[0]
+        ori_ssim_avg  += original_result[1]
+        ori_rmse_avg  += original_result[2]
+        pred_psnr_avg += pred_result[0]
+        pred_ssim_avg += pred_result[1]
+        pred_rmse_avg += pred_result[2]
+        gt_psnr_avg   += gt_result[0]
+        gt_ssim_avg   += gt_result[1]
+        gt_rmse_avg   += gt_result[2]
+
+        # PNG Save clip for windowing visualize
+        input_n_20    = input_n_20.clip(min=0, max=80)
+        input_n_100   = input_n_100.clip(min=0, max=80)
+        pred_n_100    = pred_n_100.clip(min=0, max=80)
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
+        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
+
+
+    print('\n')
+    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
+    print('\n')
+    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
+    print('\n')
+    print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
+
+# 2.MAP_NN
+def train_MAP_NN_Previous(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training, print_freq, batch_size):
+    model.Generator.train(True)
+    model.Discriminator.train(True)
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Train: [epoch:{}]'.format(epoch)
+
+    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
+        
+        if patch_training: 
+            input_n_20  = torch.cat([ batch_data[i]['n_20']  for i in range(8) ]).to(device).float()  # 8 is patch_nums
+            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).to(device).float()  # (8*batch, C(=1), 64, 64) or (8*batch, C(=1), D(=3), H(=64), W(=64))
+
+        else :
+            input_n_20   = batch_data['n_20'].to(device).float()
+            input_n_100  = batch_data['n_100'].to(device).float()
+
+        # Discriminator, 4 time more training than Generator
+        optimizer_D.zero_grad()
+        model.Discriminator.zero_grad()  # Same as optimizer zero grad()
+        for _ in range(4):
+            d_loss, gp_loss = model.d_loss(input_n_20, input_n_100, gp=True, return_gp=True)
+            d_loss.backward()
+            optimizer_D.step()
+            metric_logger.update(d_loss=d_loss, gp_loss=gp_loss)
+
+        # Generator, perceptual loss
+        optimizer_G.zero_grad()
+        model.Generator.zero_grad()     # Same as optimizer zero grad()
+        g_loss, adv_loss, mse_loss, edge_loss = model.g_loss(input_n_20, input_n_100)
+        g_loss.backward()
+        optimizer_G.step()
+        metric_logger.update(g_loss=g_loss, adv_loss=adv_loss, mse_loss=mse_loss, edge_loss=edge_loss)
+        
+        metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
+
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def valid_MAP_NN_Previous(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
+    model.Generator.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
+    header = 'Valid: [epoch:{}]'.format(epoch)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True)
+
+    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
+        input_n_20   = batch_data['n_20'].to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
+
+        pred_n_100 = model.Generator(input_n_20)     
+            
+        L1_loss = criterion(pred_n_100, input_n_100)
+        loss_value = L1_loss.item()
+        metric_logger.update(L1_loss=loss_value)
+
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
+    # PNG Save
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
+
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def test_MAP_NN_Previous(model, data_loader, device, save_dir):
     # switch to evaluation mode
     model.Generator.eval()
     
@@ -1334,8 +1465,7 @@ def test_WGAN_VGG_Previous(model, data_loader, device, save_dir):
         input_n_100  = batch_data['n_100'].to(device).float()
         
         # Forward Generator
-        # pred_n_100 = model(input_n_20)
-        pred_n_100 = model.Generator(input_n_20)
+        pred_n_100 = model.Generator(input_n_20) 
         # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
 
         os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
@@ -1379,7 +1509,9 @@ def test_WGAN_VGG_Previous(model, data_loader, device, save_dir):
     print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
 
 
-# 2.SACNN 
+
+# 5.SACNN - No
+# from monai.transforms import SaveImage
 def train_SACNN_Previous_3D(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training):
     model.Generator.train(True)
     model.Discriminator.train(True)
@@ -1474,8 +1606,6 @@ def valid_SACNN_Previous_3D(model, criterion, data_loader, device, epoch, save_d
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-# 수정중
-from monai.transforms import SaveImage
 @torch.no_grad()
 def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
     # switch to evaluation mode
@@ -1544,16 +1674,152 @@ def test_SACNN_Previous_3D(model, data_loader, device, save_dir):
     print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
 
 
-# 3.DUGAN
-def train_DUGAN_Previous(model, data_loader, optimizer_G, optimizer_Img_D, optimizer_Grad_D, device, epoch, patch_training):
+# 3.Markovian_Patch_GAN
+def train_Markovian_Patch_GAN_Previous(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training, print_freq, batch_size):
     model.Generator.train(True)
-    model.Img_Discriminator.train(True)
-    model.Grad_Discriminator.train(True)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    model.Discriminator.train(True)
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 10  
+    
+    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
+        if patch_training: 
+            input_n_20  = torch.cat([ batch_data[i]['n_20']  for i in range(8) ]).to(device).float()  # 8 is patch_nums
+            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).to(device).float()  # (8*batch, C(=1), 64, 64) or (8*batch, C(=1), D(=3), H(=64), W(=64))
+
+        else :
+            input_n_20   = batch_data['n_20'].to(device).float()
+            input_n_100  = batch_data['n_100'].to(device).float()
+
+        # Discriminator
+        optimizer_D.zero_grad()
+        model.Discriminator.zero_grad()  
+        d_loss = model.d_loss(input_n_20, input_n_100)
+        d_loss.backward()
+        optimizer_D.step()
+
+        # Generator, perceptual loss
+        optimizer_G.zero_grad()
+        model.Generator.zero_grad()
+        g_loss = model.g_loss(input_n_20, input_n_100)
+        g_loss.backward()
+        optimizer_G.step()
+        
+        metric_logger.update(g_loss=g_loss, d_loss=d_loss)
+        metric_logger.update(lr=optimizer_G.param_groups[0]["lr"], lr_D=optimizer_D.param_groups[0]["lr"])
+
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def valid_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
+    model.Generator.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
+    header = 'Valid: [epoch:{}]'.format(epoch)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True) 
+
+    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
+        input_n_20   = batch_data['n_20'].to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
+        
+        pred_n_100 = model.Generator(input_n_20)
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
+            
+        L1_loss = criterion(pred_n_100, input_n_100)
+        loss_value = L1_loss.item()
+        metric_logger.update(L1_loss=loss_value)
+
+
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
+    # PNG Save
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
+
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def test_Markovian_Patch_GAN_Previous(model, data_loader, device, save_dir):
+    # switch to evaluation mode
+    model.Generator.eval()
+    
+    # compute PSNR, SSIM, RMSE
+    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
+    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
+    gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
+
+    iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
+    for batch_data in iterator:
+        
+        input_n_20   = batch_data['n_20'].to(device).float()
+        input_n_100  = batch_data['n_100'].to(device).float()
+        
+        # Forward Generator
+        # pred_n_100 = model(input_n_20)
+        pred_n_100 = model.Generator(input_n_20)
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
+
+        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+        
+        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
+        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
+        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
+        
+        # DCM Save
+        save_dicom(batch_data['path_n_20'][0],  input_n_20,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
+        save_dicom(batch_data['path_n_100'][0], input_n_100, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
+        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
+        
+        # Metric
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
+        ori_psnr_avg  += original_result[0]
+        ori_ssim_avg  += original_result[1]
+        ori_rmse_avg  += original_result[2]
+        pred_psnr_avg += pred_result[0]
+        pred_ssim_avg += pred_result[1]
+        pred_rmse_avg += pred_result[2]
+        gt_psnr_avg   += gt_result[0]
+        gt_ssim_avg   += gt_result[1]
+        gt_rmse_avg   += gt_result[2]
+
+
+        # PNG Save clip for windowing visualize
+        input_n_20    = input_n_20.clip(min=0, max=80)
+        input_n_100   = input_n_100.clip(min=0, max=80)
+        pred_n_100    = pred_n_100.clip(min=0, max=80)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
+
+    print('\n')
+    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
+    print('\n')
+    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
+    print('\n')
+    print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
+
+
+
+# 4.DUGAN
+def train_DUGAN_Previous(model, data_loader, optimizer_G, optimizer_Img_D, optimizer_Grad_D, device, epoch, patch_training, print_freq, batch_size):
+    model.Generator.train(True)
+    model.Image_Discriminator.train(True)
+    model.Grad_Discriminator.train(True)
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Train: [epoch:{}]'.format(epoch)
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         
@@ -1565,116 +1831,72 @@ def train_DUGAN_Previous(model, data_loader, optimizer_G, optimizer_Img_D, optim
             input_n_20   = batch_data['n_20'].to(device).float()
             input_n_100  = batch_data['n_100'].to(device).float()
 
-        # Inference Setting
-        low_dose  = input_n_20
-        full_dose = input_n_100
-        gen_full_dose       = model.Generator(low_dose)
-        grad_gen_full_dose  = model.sobel(gen_full_dose)
-        grad_low_dose       = model.sobel(low_dose)
-        grad_full_dose      = model.sobel(full_dose)   
 
         # Discriminator
+            # Image D
         optimizer_Img_D.zero_grad()
-        model.Img_Discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            Img_D_loss, Img_D_dict   = model.train_Img_Discriminator(full_dose, low_dose, gen_full_dose, prefix='Img', n_iter=epoch)
-            Img_D_loss.backward()
-            optimizer_Img_D.step()
-        
+        model.Image_Discriminator.zero_grad() 
+        Img_d_loss, Img_detail = model.Image_d_loss(input_n_20, input_n_100)
+        Img_d_loss.backward()
+        optimizer_Img_D.step()
+        metric_logger.update(**Img_detail)
+            # Grad D
         optimizer_Grad_D.zero_grad()
-        model.Grad_Discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            Grad_D_loss, Grad_D_dict = model.train_Grad_Discriminator(grad_full_dose, grad_low_dose, grad_gen_full_dose, prefix='Grad', n_iter=epoch)
-            Grad_D_loss.backward()
-            optimizer_Grad_D.step()        
+        model.Grad_Discriminator.zero_grad()        
+        Grad_d_loss, Grad_detail = model.Grad_d_loss(input_n_20, input_n_100)
+        Grad_d_loss.backward()
+        optimizer_Grad_D.step()        
+        metric_logger.update(**Grad_detail)
 
         # Generator
         optimizer_G.zero_grad()
-        model.Generator.zero_grad()     # Same as optimizer zero grad()
-        img_gen_enc, img_gen_dec   = model.Img_Discriminator(gen_full_dose)
-        img_gen_loss               = model.gan_metric(img_gen_enc, 1.) + model.gan_metric(img_gen_dec, 1.)
-
-        grad_gen_enc, grad_gen_dec = model.Grad_Discriminator(grad_gen_full_dose)
-        grad_gen_loss              = model.gan_metric(grad_gen_enc, 1.) + model.gan_metric(grad_gen_dec, 1.)
-
-        adv_loss  = 0.1*img_gen_loss + 0.1*grad_gen_loss 
-        pix_loss  = 1.0*F.mse_loss(gen_full_dose, full_dose) # + F.l1_loss(gen_full_dose, full_dose) 논문에서는 없었음...
-        grad_loss = 20.0*F.l1_loss(grad_gen_full_dose, grad_full_dose)
-
-        G_loss = adv_loss + pix_loss + grad_loss
-                 
-        G_loss.backward()        
+        model.Generator.zero_grad()
+        g_loss, g_detail = model.g_loss(input_n_20, input_n_100)
+        g_loss.backward()        
         optimizer_G.step()
+        metric_logger.update(**g_detail)
 
-
-        G_dict = {}
-        G_dict.update({
-            'loss/img_gen_loss': img_gen_loss,
-            'loss/grad_gen_loss': grad_gen_loss,
-            'loss/pix_loss': pix_loss,
-            'loss/grad_loss': grad_loss,
-        })
-
-        # msg_dict.update({
-        #     'enc/grad_gen_enc': grad_gen_enc,
-        #     'dec/grad_gen_dec': grad_gen_dec,
-        #     'loss/grad_gen_loss': grad_gen_loss,
-        #     'enc/img_gen_enc': img_gen_enc,
-        #     'dec/img_gen_dec': img_gen_dec,
-        #     'loss/img_gen_loss': img_gen_loss,
-        #     'loss/pix': pix_loss,
-        #     'loss/l1': l1_loss,
-        #     'loss/grad': grad_loss,
-        # })
-
-        metric_logger.update(**G_dict)
         metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
         
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def valid_DUGAN_Previous(model, criterion, data_loader, device, epoch, save_dir):
+def valid_DUGAN_Previous(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
     model.Generator.eval()
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True)  
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # print(input_n_20.shape) # (1, 1, 512, 512)
 
         pred_n_100 = model.Generator(input_n_20)     
             
         L1_loss = criterion(pred_n_100, input_n_100)
-
         loss_value = L1_loss.item()
-
         metric_logger.update(L1_loss=loss_value)
 
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
 
-    # Denormalize
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
     # PNG Save
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
 def test_DUGAN_Previous(model, data_loader, device, save_dir):
@@ -1737,312 +1959,8 @@ def test_DUGAN_Previous(model, data_loader, device, save_dir):
     print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
 
 
-# 4.MAP_NN
-def train_MAP_NN_Previous(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training):
-    model.Generator.train(True)
-    model.Discriminator.train(True)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 10  
-
-    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
-        
-        if patch_training: 
-            input_n_20  = torch.cat([ batch_data[i]['n_20']  for i in range(8) ]).to(device).float()  # 8 is patch_nums
-            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).to(device).float()  # (8*batch, C(=1), 64, 64) or (8*batch, C(=1), D(=3), H(=64), W(=64))
-
-        else :
-            input_n_20   = batch_data['n_20'].to(device).float()
-            input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # print("Check = ", input_n_20.max(), input_n_20.min(), input_n_20.dtype, input_n_20.shape)
-
-        # Discriminator, 4 time more training than Generator
-        optimizer_D.zero_grad()
-        model.Discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(4):
-            d_loss, gp_loss = model.d_loss(input_n_20, input_n_100, gp=True, return_gp=True)
-            d_loss.backward()
-            optimizer_D.step()
-
-        # Generator, perceptual loss
-        optimizer_G.zero_grad()
-        model.Generator.zero_grad()     # Same as optimizer zero grad()
-        g_loss, adv_loss, mse_loss, edge_loss = model.g_loss(input_n_20, input_n_100)
-        g_loss.backward()
-        optimizer_G.step()
-        
-        metric_logger.update(g_loss=g_loss, d_loss=d_loss, gp_loss=gp_loss, adv_loss=adv_loss, mse_loss=mse_loss, edge_loss=edge_loss)
-        metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
-        
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
-@torch.no_grad()
-def valid_MAP_NN_Previous(model, criterion, data_loader, device, epoch, save_dir):
-    model.Generator.eval()
-    model.Discriminator.eval()
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
-
-    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
-        input_n_20   = batch_data['n_20'].to(device).float()
-        input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # print(input_n_20.shape) # (1, 1, 512, 512)
-
-        pred_n_100 = model.Generator(input_n_20)     
-            
-        L1_loss = criterion(pred_n_100, input_n_100)
-
-        loss_value = L1_loss.item()
-
-        metric_logger.update(L1_loss=loss_value)
-
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    # # Denormalize
-    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80)     
-
-    # # PNG Save
-    # print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    # plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    # plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    # plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-
-    # window 수정
-    # Denormalize
-    input_n_20   = fn_tonumpy(input_n_20).clip(min=0, max=1)
-    input_n_100  = fn_tonumpy(input_n_100).clip(min=0, max=1)
-    pred_n_100   = fn_tonumpy(pred_n_100).clip(min=0, max=1) 
-
-    # PNG Save
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray")
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
-@torch.no_grad()
-def test_MAP_NN_Previous(model, data_loader, device, save_dir):
-    # switch to evaluation mode
-    model.Generator.eval()
-    
-    # compute PSNR, SSIM, RMSE
-    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
-    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
-    gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
-
-    iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
-    for batch_data in iterator:
-        
-        input_n_20   = batch_data['n_20'].to(device).float()
-        input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # Forward Generator
-        pred_n_100 = model.Generator(input_n_20) 
-        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
-
-        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
-        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
-        
-        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
-        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
-        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
-        
-        # DCM Save
-        save_dicom(batch_data['path_n_20'][0],  input_n_20,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
-        save_dicom(batch_data['path_n_100'][0], input_n_100, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
-        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
-        
-        # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
-        ori_psnr_avg  += original_result[0]
-        ori_ssim_avg  += original_result[1]
-        ori_rmse_avg  += original_result[2]
-        pred_psnr_avg += pred_result[0]
-        pred_ssim_avg += pred_result[1]
-        pred_rmse_avg += pred_result[2]
-        gt_psnr_avg   += gt_result[0]
-        gt_ssim_avg   += gt_result[1]
-        gt_rmse_avg   += gt_result[2]
-
-
-        # PNG Save clip for windowing visualize
-        input_n_20    = input_n_20.clip(min=0, max=80)
-        input_n_100   = input_n_100.clip(min=0, max=80)
-        pred_n_100    = pred_n_100.clip(min=0, max=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
-
-    print('\n')
-    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
-    print('\n')
-    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
-    print('\n')
-    print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
-
-
-
-
-# 5.Markovian_Patch_GAN
-def train_Markovian_Patch_GAN_Previous(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training):
-    model.Generator.train(True)
-    model.Discriminator.train(True)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 10  
-
-    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
-        
-        if patch_training: 
-            input_n_20  = torch.cat([ batch_data[i]['n_20']  for i in range(8) ]).to(device).float()  # 8 is patch_nums
-            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).to(device).float()  # (8*batch, C(=1), 64, 64) or (8*batch, C(=1), D(=3), H(=64), W(=64))
-
-        else :
-            input_n_20   = batch_data['n_20'].to(device).float()
-            input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # print("Check = ", input_n_20.max(), input_n_20.min(), input_n_20.dtype, input_n_20.shape)
-
-        # Discriminator
-        optimizer_D.zero_grad()
-        model.Discriminator.zero_grad()  # Same as optimizer zero grad()
-        d_loss = model.d_loss(input_n_20, input_n_100)
-        d_loss.backward()
-        optimizer_D.step()
-
-        # Generator, perceptual loss
-        optimizer_G.zero_grad()
-        model.Generator.zero_grad()     # Same as optimizer zero grad()
-        g_loss = model.g_loss(input_n_20, input_n_100)
-        g_loss.backward()
-        optimizer_G.step()
-        
-        metric_logger.update(g_loss=g_loss, d_loss=d_loss)
-        metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
-        
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
-@torch.no_grad()
-def valid_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, epoch, save_dir):
-    model.Generator.eval()
-    model.Discriminator.eval()
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
-
-    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
-        input_n_20   = batch_data['n_20'].to(device).float()
-        input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # pred_n_100 = model.Generator(input_n_20)
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
-            
-        L1_loss = criterion(pred_n_100, input_n_100)
-        loss_value = L1_loss.item()
-        metric_logger.update(L1_loss=loss_value)
-
-    # print("Check == ", pred_n_100.shape, pred_n_100.max(), pred_n_100.min())
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    # Denormalize
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
-
-    # PNG Save
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
-@torch.no_grad()
-def test_Markovian_Patch_GAN_Previous(model, data_loader, device, save_dir):
-    # switch to evaluation mode
-    model.Generator.eval()
-    
-    # compute PSNR, SSIM, RMSE
-    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
-    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
-    gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
-
-    iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
-    for batch_data in iterator:
-        
-        input_n_20   = batch_data['n_20'].to(device).float()
-        input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # Forward Generator
-        # pred_n_100 = model(input_n_20)
-        pred_n_100 = model.Generator(input_n_20)
-        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
-
-        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
-        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
-        
-        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
-        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
-        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
-        
-        # DCM Save
-        save_dicom(batch_data['path_n_20'][0],  input_n_20,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
-        save_dicom(batch_data['path_n_100'][0], input_n_100, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
-        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
-        
-        # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
-        ori_psnr_avg  += original_result[0]
-        ori_ssim_avg  += original_result[1]
-        ori_rmse_avg  += original_result[2]
-        pred_psnr_avg += pred_result[0]
-        pred_ssim_avg += pred_result[1]
-        pred_rmse_avg += pred_result[2]
-        gt_psnr_avg   += gt_result[0]
-        gt_ssim_avg   += gt_result[1]
-        gt_rmse_avg   += gt_result[2]
-
-
-        # PNG Save clip for windowing visualize
-        input_n_20    = input_n_20.clip(min=0, max=80)
-        input_n_100   = input_n_100.clip(min=0, max=80)
-        pred_n_100    = pred_n_100.clip(min=0, max=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
-
-    print('\n')
-    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
-    print('\n')
-    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
-    print('\n')
-    print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
 
 
 
@@ -2165,10 +2083,6 @@ def test_SACNN_AE_Previous_3D(model, data_loader, device, save_dir):
 
 
 # TEST      ################################################
-
-# 1. TEST Unet GAN vs Unet
-# 2. TEST Restomer vs Unet 
-# 3. TEST 해상도 유지 SPADE vs 업샘플 (Transformer_Generator vs Restormer_Decoder/Uformer_Decoder)
 
 @torch.no_grad()
 def test_Unet_GAN_Ours(model, data_loader, device, save_dir):

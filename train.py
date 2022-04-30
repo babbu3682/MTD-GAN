@@ -37,7 +37,7 @@ def get_args_parser():
 
     # Dataset parameters
     # parser.add_argument('--data-set', default='CIFAR10', type=str, help='dataset name')    
-    parser.add_argument('--data-folder-dir', default="/workspace/sunggu/1.Hemorrhage/SMART-Net/datasets/samples", type=str, help='dataset folder dirname')    
+    parser.add_argument('--data-folder-dir', default="/workspace/sunggu/1.Hemorrhage/4.Dose_img2img/datasets/[sinogram]Brain_3mm_DCM", type=str, help='dataset folder dirname')    
 
     # Model parameters
     parser.add_argument('--model-name',      default='Sequence_SkipHidden_Unet_ALL',  type=str, help='model name')    
@@ -47,6 +47,7 @@ def get_args_parser():
     # Training Option
     parser.add_argument('--patch_training',  default="FALSE",   type=str2bool, help='patch_training')    
     parser.add_argument('--multiple_GT',     default="FALSE",   type=str2bool, help='multiple ground truth')  
+    parser.add_argument('--windowing',       default="FALSE",   type=str2bool, help='apply windowing')  
 
     # DataLoader setting
     parser.add_argument('--batch-size',  default=72, type=int)
@@ -54,7 +55,7 @@ def get_args_parser():
     parser.add_argument('--pin-mem',    action='store_true', help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
 
     # Optimizer parameters
-    parser.add_argument('--optimizer', default='AdamW', type=str, metavar='OPTIMIZER', help='Optimizer (default: "AdamW"')
+    parser.add_argument('--optimizer', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "AdamW"')
     
     # Learning rate and schedule and Epoch parameters
     parser.add_argument('--lr-scheduler', default='poly_lr', type=str, metavar='lr_scheduler', help='lr_scheduler (default: "poly_learning_rate"')
@@ -122,19 +123,23 @@ def main(args):
 
 
     # Optimizer & LR Schedule
-    if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN':
+    if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN':
         optimizer_G    = create_optim(name=args.optimizer, model=model.Generator, args=args)
         optimizer_D    = create_optim(name=args.optimizer, model=model.Discriminator, args=args)
         lr_scheduler_G = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
         lr_scheduler_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_D, args=args)
+    elif args.model_name == 'Markovian_Patch_GAN':
+        optimizer_G    = create_optim(name=args.optimizer, model=model.Generator, args=args); args.lr = args.lr * 4; 
+        optimizer_D    = create_optim(name=args.optimizer, model=model.Discriminator, args=args)
+        lr_scheduler_G = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
+        lr_scheduler_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_D, args=args)        
     elif args.model_name == 'DU_GAN':
         optimizer_G         = create_optim(name=args.optimizer,model=model.Generator, args=args)
-        optimizer_Img_D     = create_optim(name=args.optimizer,model=model.Img_Discriminator, args=args)
+        optimizer_Img_D     = create_optim(name=args.optimizer,model=model.Image_Discriminator, args=args)
         optimizer_Grad_D    = create_optim(name=args.optimizer,model=model.Grad_Discriminator, args=args)
         lr_scheduler_G      = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
         lr_scheduler_Img_D  = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Img_D, args=args)
         lr_scheduler_Grad_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Grad_D, args=args)
-    
     elif args.model_name == 'FSGAN':
         optimizer_G         = create_optim(name=args.optimizer,model=model.Generator, args=args)
         optimizer_Low_D     = create_optim(name=args.optimizer,model=model.Low_discriminator, args=args)
@@ -142,13 +147,6 @@ def main(args):
         lr_scheduler_G      = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
         lr_scheduler_Low_D  = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Low_D, args=args)
         lr_scheduler_High_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_High_D, args=args)
-    elif args.model_name == 'FDGAN':
-        optimizer_G             = create_optim(name=args.optimizer,model=model.Generator, args=args)
-        optimizer_Img_D         = create_optim(name=args.optimizer,model=model.Img_discriminator, args=args)
-        optimizer_Fourier_D     = create_optim(name=args.optimizer,model=model.Fourier_discriminator, args=args)
-        lr_scheduler_G          = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
-        lr_scheduler_Img_D      = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Img_D, args=args)
-        lr_scheduler_Fourier_D  = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Fourier_D, args=args)
     elif args.model_name == 'FDGAN_PatchGAN':
         optimizer_G             = create_optim(name=args.optimizer,model=model.Generator, args=args)
         optimizer_Image_D       = create_optim(name=args.optimizer,model=model.Image_discriminator, args=args)
@@ -198,17 +196,6 @@ def main(args):
             fix_optimizer(optimizer_G)
             fix_optimizer(optimizer_Low_D)
             fix_optimizer(optimizer_High_D)
-        elif args.model_name == 'FDGAN':  
-            optimizer_G.load_state_dict(checkpoint['optimizer_G'])
-            optimizer_Img_D.load_state_dict(checkpoint['optimizer_Img_D'])
-            optimizer_Fourier_D.load_state_dict(checkpoint['optimizer_Fourier_D'])
-            lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])
-            lr_scheduler_Img_D.load_state_dict(checkpoint['lr_scheduler_Img_D'])
-            lr_scheduler_Fourier_D.load_state_dict(checkpoint['lr_scheduler_Fourier_D'])
-            # Optimizer Error fix...!
-            fix_optimizer(optimizer_G)
-            fix_optimizer(optimizer_Img_D)
-            fix_optimizer(optimizer_Fourier_D)
         elif args.model_name == 'FDGAN_PatchGAN':              
             optimizer_G.load_state_dict(checkpoint['optimizer_G'])
             optimizer_Image_D.load_state_dict(checkpoint['optimizer_Image_D'])
@@ -231,18 +218,16 @@ def main(args):
     if args.multi_gpu_mode == 'DataParallel':
         if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN':
             model.Generator             = torch.nn.DataParallel(model.Generator)         
-            model.Discriminator         = torch.nn.DataParallel(model.Image_discriminator)
+            model.Discriminator         = torch.nn.DataParallel(model.Discriminator)
             model.Generator.to(device)   
             model.Discriminator.to(device)   
-
         elif args.model_name == 'DU_GAN':
             model.Generator             = torch.nn.DataParallel(model.Generator)         
-            model.Img_Discriminator     = torch.nn.DataParallel(model.Image_discriminator)
+            model.Image_Discriminator   = torch.nn.DataParallel(model.Image_Discriminator)
             model.Grad_Discriminator    = torch.nn.DataParallel(model.Grad_Discriminator)
             model.Generator.to(device)   
-            model.Img_Discriminator.to(device)   
+            model.Image_Discriminator.to(device)   
             model.Grad_Discriminator.to(device)   
-
         elif args.model_name == 'FDGAN_PatchGAN':
             model.Generator             = torch.nn.DataParallel(model.Generator)         
             model.Image_discriminator   = torch.nn.DataParallel(model.Image_discriminator)
@@ -250,7 +235,6 @@ def main(args):
             model.Generator.to(device)   
             model.Image_discriminator.to(device)   
             model.Fourier_discriminator.to(device)  
-
         else :
             model = torch.nn.DataParallel(model)
             model.to(device)            
@@ -272,7 +256,7 @@ def main(args):
             valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.criterion)
 
             # Ours
-        elif args.model_name == 'SPADE_UNet' or args.model_name == 'SPADE_UNet_Upgrade' or args.model_name == 'SPADE_UNet_Upgrade_2' or args.model_name == 'SPADE_UNet_Upgrade_3' or args.model_name == 'ResFFT_LFSPADE' or args.model_name == 'ResFFT_Freq_SPADE_Att' or args.model_name == 'ResFFT_Freq_SPADE_Att_window':
+        elif args.model_name == 'ResFFT_LFSPADE' or args.model_name == 'ResFFT_Freq_SPADE_Att' or args.model_name == 'ResFFT_Freq_SPADE_Att_window':
             train_stats = train_CNN_Based_Ours(model, criterion, data_loader_train, optimizer, device, epoch, args.patch_training, args.criterion)
             valid_stats = valid_CNN_Based_Ours(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.criterion)
 
@@ -280,27 +264,27 @@ def main(args):
         # GAN based
             # Previous        
         elif args.model_name == 'WGAN_VGG': 
-            train_stats = train_WGAN_VGG_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training)            
+            train_stats = train_WGAN_VGG_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_WGAN_VGG_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir)
+            valid_stats = valid_WGAN_VGG_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
             print("Averaged valid_stats: ", valid_stats)
 
         elif args.model_name == 'MAP_NN': 
-            train_stats = train_MAP_NN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training)            
+            train_stats = train_MAP_NN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_MAP_NN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir)
-            print("Averaged valid_stats: ", valid_stats)
-
-        elif args.model_name == 'DU_GAN': 
-            train_stats = train_DUGAN_Previous(model, data_loader_train, optimizer_G, optimizer_Img_D, optimizer_Grad_D, device, epoch, args.patch_training)            
-            print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_DUGAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir)
+            valid_stats = valid_MAP_NN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
             print("Averaged valid_stats: ", valid_stats)
 
         elif args.model_name == 'Markovian_Patch_GAN': 
-            train_stats = train_Markovian_Patch_GAN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training)            
+            train_stats = train_Markovian_Patch_GAN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_Markovian_Patch_GAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir)
+            valid_stats = valid_Markovian_Patch_GAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            print("Averaged valid_stats: ", valid_stats)
+
+        elif args.model_name == 'DU_GAN': 
+            train_stats = train_DUGAN_Previous(model, data_loader_train, optimizer_G, optimizer_Img_D, optimizer_Grad_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
+            print("Averaged train_stats: ", train_stats)
+            valid_stats = valid_DUGAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
             print("Averaged valid_stats: ", valid_stats)
 
             # Ours
@@ -308,12 +292,6 @@ def main(args):
             train_stats = train_FSGAN_Previous(model, data_loader_train, optimizer_G, optimizer_Low_D, optimizer_High_D, device, epoch, args.patch_training)            
             print("Averaged train_stats: ", train_stats)
             valid_stats = valid_FSGAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir)
-            print("Averaged valid_stats: ", valid_stats)
-
-        elif args.model_name == "FDGAN": 
-            train_stats = train_FDGAN_Previous(model, data_loader_train, optimizer_G, optimizer_Img_D, optimizer_Fourier_D, device, epoch, args.patch_training)            
-            print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_FDGAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir)
             print("Averaged valid_stats: ", valid_stats)
 
         elif args.model_name == "FDGAN_PatchGAN": 
@@ -368,19 +346,6 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)   
 
-            elif args.model_name == 'FDGAN':
-                torch.save({
-                    'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
-                    'optimizer_G': optimizer_G.state_dict(), 
-                    'optimizer_Img_D': optimizer_Img_D.state_dict(), 
-                    'optimizer_Fourier_D': optimizer_Fourier_D.state_dict(), 
-                    'lr_scheduler_G': lr_scheduler_G.state_dict(),
-                    'lr_scheduler_Img_D': lr_scheduler_Img_D.state_dict(),
-                    'lr_scheduler_Fourier_D': lr_scheduler_Fourier_D.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, checkpoint_path)   
-
             elif args.model_name == 'FDGAN_PatchGAN':
                 torch.save({
                     'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
@@ -422,10 +387,6 @@ def main(args):
             lr_scheduler_G.step(epoch)
             lr_scheduler_Low_D.step(epoch)
             lr_scheduler_High_D.step(epoch)            
-        elif args.model_name == 'FDGAN':            
-            lr_scheduler_G.step(epoch)
-            lr_scheduler_Img_D.step(epoch)
-            lr_scheduler_Fourier_D.step(epoch)     
         elif args.model_name == 'FDGAN_PatchGAN':            
             lr_scheduler_G.step(epoch)
             lr_scheduler_Image_D.step(epoch)
