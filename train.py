@@ -257,7 +257,7 @@ def main(args):
             valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
             print("Averaged valid_stats: ", valid_stats)
         # Transformer based
-        elif args.model_name == 'TED_Net' or args.model_name == 'Restormer': 
+        elif args.model_name == 'TED_Net' or args.model_name == 'Restormer' or args.model_name == 'CTformer': 
             train_stats = train_Transformer_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.patch_training, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
             valid_stats = valid_Transformer_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)

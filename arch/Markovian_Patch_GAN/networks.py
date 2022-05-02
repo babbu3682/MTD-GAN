@@ -20,8 +20,8 @@ def create_window(window_size, channel):
 
 def create_mask(neighborhood_size, SIZE):
     mask=torch.zeros([SIZE,SIZE], dtype=torch.bool)
-    for j in range(0,SIZE):
-        for i in range(0,int(neighborhood_size*np.sqrt(SIZE)),int(np.sqrt(SIZE))):
+    for j in range(0, SIZE):
+        for i in range(0, int(neighborhood_size*np.sqrt(SIZE)), int(np.sqrt(SIZE))):
             for k in range(neighborhood_size):
                 mask[j,i+k]=1
     return mask
@@ -76,7 +76,7 @@ class NonLocal(nn.Module):
                                         nn.Conv2d(in_channels = in_dim , out_channels = in_dim , kernel_size= 3,padding=1 ))            
         #self.gamma = nn.Parameter(torch.zeros(1))
         self.softmax  = nn.Softmax(dim=-1) #
-        self.mask     = create_mask(neighborhood_size=10, SIZE=int(SIZE))
+        self.mask     = create_mask(neighborhood_size=3, SIZE=int(SIZE))  # patch image size / (6 * 4) = 2.6666 -> "3"
         self.relu     = nn.ReLU(inplace=True)
 
     def forward(self,x):
@@ -171,7 +171,8 @@ class UNet(nn.Module):
 
       x=self.conv2(x)
 
-      return F.relu(x)
+    #   return F.relu(x)
+      return x
 
 class SNConvWithActivation(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, activation=torch.nn.LeakyReLU(0.2, inplace=True)):
@@ -248,7 +249,7 @@ class Markovian_Patch_GAN(nn.Module):
         self.Discriminator     = ImageDiscriminator()
         
         # Loss
-        self.p_criterion       = NCMSE()
+        # self.p_criterion       = NCMSE()
         
 
     def d_loss(self, x, y):
@@ -264,7 +265,8 @@ class Markovian_Patch_GAN(nn.Module):
         fake   = self.Generator(x)
         d_fake = self.Discriminator(fake)
 
-        g_loss = -torch.mean(d_fake) + 0.1*self.p_criterion(fake, y, x)
+        # g_loss = -torch.mean(d_fake) + 0.1*self.p_criterion(fake, y, x)
+        g_loss = -torch.mean(d_fake)
         return g_loss
 
 

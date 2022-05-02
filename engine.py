@@ -1140,7 +1140,7 @@ def test_CNN_Based_Previous(model, data_loader, device, save_dir):
         input_n_100  = batch_data['n_100'].to(device).float()
         
         # Forward Generator
-        if model._get_name() == "Restormer" or model._get_name() == "TED_Net":
+        if model._get_name() == "Restormer" or model._get_name() == "TED_Net" or model._get_name() == "CTformer":
             pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
         else:
             pred_n_100 = model(input_n_20)
@@ -1208,7 +1208,7 @@ def train_Transformer_Based_Previous(model, data_loader, optimizer, device, epoc
 
         if model._get_name() == "Restormer":
             loss = model.criterion(pred_n_100, input_n_100)
-        elif model._get_name() == "TED_Net":
+        elif model._get_name() == "TED_Net" or model._get_name() == "CTformer":
             loss = model.criterion(pred_n_100, input_n_100)*100 + 1e-4  # to prevent 0
 
         loss_value = loss.item()
