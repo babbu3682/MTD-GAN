@@ -35,7 +35,7 @@ class DUGAN(TrainTask):
         parser.add_argument("--cutmix_prob", default=0.5, type=float)
         parser.add_argument("--img_gen_loss_weight", default=0.1, type=float)
         parser.add_argument("--grad_gen_loss_weight", default=0.1, type=float)
-        parser.add_argument("--pix_loss_weight", default=1., type=float)
+        parser.add_argument("--pix_loss_weight", default=1.0, type=float)
         parser.add_argument("--grad_loss_weight", default=20., type=float)
         parser.add_argument("--cr_loss_weight", default=1.0, type=float)
         parser.add_argument("--cutmix_warmup_iter", default=1000, type=int)

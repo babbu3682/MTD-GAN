@@ -20,18 +20,19 @@ class DownBlock(nn.Module):
     def __init__(self, input_channels, filters, downsample=True):
         super().__init__()
         self.conv_res = nn.Conv2d(input_channels, filters, kernel_size=1, stride=(2 if downsample else 1))
-        self.net = double_conv(input_channels, filters)
-        self.down = nn.Conv2d(filters, filters, kernel_size=4, padding=1, stride=2) if downsample else None
+        self.net      = double_conv(input_channels, filters)
+        self.down     = nn.Conv2d(filters, filters, kernel_size=4, padding=1, stride=2) if downsample else None
 
     def forward(self, x):
         res = self.conv_res(x)
-        x = self.net(x)
+        x   = self.net(x)
         unet_res = x
 
         if self.down is not None:
             x = self.down(x)
 
         x = x + res
+
         return x, unet_res
 
 
@@ -39,8 +40,8 @@ class UpBlock(nn.Module):
     def __init__(self, input_channels, out_channels):
         super().__init__()
         self.shortcut = nn.Conv2d(input_channels // 2, out_channels, kernel_size=1)
-        self.conv = double_conv(input_channels, out_channels)
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.conv     = double_conv(input_channels, out_channels)
+        self.up       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
 
     def forward(self, x, up):
         x = self.up(x)
@@ -67,6 +68,7 @@ class UNet(nn.Module):
             self.down_blocks.append(DownBlock(in_channel, out_channel, downsample=(i != (len(channel_in_out) - 1))))
 
         last_channel = filters[-1]
+        
         if use_discriminator:
             self.to_logit = nn.Sequential(
                 nn.LeakyReLU(negative_slope=0.2, inplace=True),
@@ -386,6 +388,115 @@ class High_UNet(UNet):
             dec_out = torch.tanh(dec_out)
 
         return dec_out
+
+
+
+# New version
+class Image_UNet(UNet):
+    def __init__(self, **kwargs):
+        super().__init__(in_channels=5, **kwargs)
+
+    def window_filter(self, x):
+        weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+        weight[0, :, :, :] = 50.0
+        weight[1, :, :, :] = 31.250
+        weight[2, :, :, :] = 45.455
+        weight[3, :, :, :] = 1.464
+        weight[4, :, :, :] = 11.628
+        bias    = torch.ones(size=(5,)).cuda()        
+        bias[0] =  -12.5
+        bias[1] =  -7.687
+        bias[2] =  -11.682
+        bias[3] =  -0.081
+        bias[4] =  -2.465        
+
+        x = F.conv2d(x, weight, bias)
+        x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+        return x
+
+    def forward(self, input):
+        input = self.window_filter(input)
+        
+        x = input
+        residuals = []
+
+        for i in range(len(self.down_blocks)):
+            x, unet_res = self.down_blocks[i](x)
+            residuals.append(unet_res)
+
+        bottom_x = self.conv(x) + x
+        x = bottom_x
+        for (up_block, res) in zip(self.up_blocks, residuals[:-1][::-1]):
+            x = up_block(x, res)
+        dec_out = self.conv_out(x)
+
+        if self.use_discriminator:
+            enc_out = self.to_logit(bottom_x)
+            if self.use_sigmoid:
+                dec_out = torch.sigmoid(dec_out)
+                enc_out = torch.sigmoid(enc_out)
+            return enc_out.squeeze(), dec_out
+
+        if self.skip_connection:
+            dec_out += input
+        if self.use_tanh:
+            dec_out = torch.tanh(dec_out)
+
+        return dec_out
+
+class Fourier_UNet(UNet):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def window_filter(self, x):
+        weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+        weight[0, :, :, :] = 50.0
+        weight[1, :, :, :] = 31.250
+        weight[2, :, :, :] = 45.455
+        weight[3, :, :, :] = 1.464
+        weight[4, :, :, :] = 11.628
+        bias    = torch.ones(size=(5,)).cuda()        
+        bias[0] =  -12.5
+        bias[1] =  -7.687
+        bias[2] =  -11.682
+        bias[3] =  -0.081
+        bias[4] =  -2.465        
+
+        x = F.conv2d(x, weight, bias)
+        x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+        return x
+
+
+    def forward(self, input):
+        input = self.window_filter(input)
+        
+        x = input
+        residuals = []
+
+        for i in range(len(self.down_blocks)):
+            x, unet_res = self.down_blocks[i](x)
+            residuals.append(unet_res)
+
+        bottom_x = self.conv(x) + x
+        x = bottom_x
+        for (up_block, res) in zip(self.up_blocks, residuals[:-1][::-1]):
+            x = up_block(x, res)
+        dec_out = self.conv_out(x)
+
+        if self.use_discriminator:
+            enc_out = self.to_logit(bottom_x)
+            if self.use_sigmoid:
+                dec_out = torch.sigmoid(dec_out)
+                enc_out = torch.sigmoid(enc_out)
+            return enc_out.squeeze(), dec_out
+
+        if self.skip_connection:
+            dec_out += input
+        if self.use_tanh:
+            dec_out = torch.tanh(dec_out)
+
+        return dec_out
+
 
 if __name__ == '__main__':
     D = UNet(repeat_num=3, use_discriminator=False)

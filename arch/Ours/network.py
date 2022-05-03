@@ -1,4 +1,5 @@
 import math
+import copy
 from telnetlib import X3PAD
 from tkinter import X
 import numpy as np
@@ -2642,7 +2643,6 @@ class Conv_Block(nn.Module):
                 actv   = self.mlp_shared(segmap)
                 gamma  = self.mlp_gamma(actv)
                 beta   = self.mlp_beta(actv)
-
                 # Apply scale & bias
                 x = x_norm*gamma + beta
             else :
@@ -3157,5 +3157,705 @@ class FDGAN_PatchGAN(nn.Module):
         return disc_loss
 
 
+# New version...!
+
+def turn_on_spectral_norm(module):
+    module_output = module
+    if isinstance(module, torch.nn.Conv2d):
+        if module.out_channels != 1 and module.in_channels > 4:
+            module_output = nn.utils.spectral_norm(module)
+    # if isinstance(module, torch.nn.Conv2d) or isinstance(module, torch.nn.Linear):
+    #     module_output = nn.utils.spectral_norm(module)
+    for name, child in module.named_children():
+        module_output.add_module(name, turn_on_spectral_norm(child))
+    del module
+    return module_output
+
+class FFT_Conv2d(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(FFT_Conv2d, self).__init__()
+
+        self.conv   = nn.utils.spectral_norm(torch.nn.Conv2d(in_channels*2, out_channels*2, kernel_size=1, stride=1))
+        self.relu   = nn.LeakyReLU(0.2)
+
+    def forward(self, x):
+        _, _, H, W = x.shape
+
+        x   = torch.fft.rfft2(x, norm='backward')
+        x_f = torch.cat([x.real, x.imag], dim=1)
+        x_f = self.relu(self.conv(x_f))
+        
+        x_real, x_imag = torch.chunk(x_f, 2, dim=1)
+        x   = torch.complex(x_real, x_imag)
+        x   = torch.fft.irfft2(x, s=(H, W), norm='backward')
+
+        return x
+
+class Image_UNet(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        # Enc
+        self.conv11    = nn.utils.spectral_norm(torch.nn.Conv2d(in_channels*5, out_channels, kernel_size=3, stride=1, padding=1))
+        self.relu11    = nn.LeakyReLU(0.2)
+        self.conv12    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.relu12    = nn.LeakyReLU(0.2)        
+        self.down1     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1))
+
+        self.conv21    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.relu21    = nn.LeakyReLU(0.2)
+        self.conv22    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.relu22    = nn.LeakyReLU(0.2)
+        self.down2     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=4, stride=2, padding=1))
+
+        self.conv31    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu31    = nn.LeakyReLU(0.2)
+        self.conv32    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu32    = nn.LeakyReLU(0.2)
+        self.down3     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=4, stride=2, padding=1))
+
+        self.conv41    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu41    = nn.LeakyReLU(0.2)
+        self.conv42    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu42    = nn.LeakyReLU(0.2)
+        self.down4     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        self.conv51    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu51    = nn.LeakyReLU(0.2)
+        self.conv52    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu52    = nn.LeakyReLU(0.2)
+        self.down5     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+        
+        self.conv61    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu61    = nn.LeakyReLU(0.2)
+        self.conv62    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu62    = nn.LeakyReLU(0.2)
+        self.down6     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        # Bot
+        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.brelu    = nn.LeakyReLU(0.2)                
+        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.brelu    = nn.LeakyReLU(0.2)                
+
+        # Dec
+        self.up1       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv11   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu11   = nn.LeakyReLU(0.2)                
+        self.dconv12   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu12   = nn.LeakyReLU(0.2)        
+
+        self.up2       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv21   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu21   = nn.LeakyReLU(0.2)                
+        self.dconv22   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu22   = nn.LeakyReLU(0.2)        
+
+        self.up3       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv31   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.drelu31   = nn.LeakyReLU(0.2)                
+        self.dconv32   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.drelu32   = nn.LeakyReLU(0.2)        
+
+        self.up4       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv41   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.drelu41   = nn.LeakyReLU(0.2)                
+        self.dconv42   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.drelu42   = nn.LeakyReLU(0.2)        
+
+        self.up5       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv51   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2*2, out_channels, kernel_size=3, stride=1, padding=1))
+        self.drelu51   = nn.LeakyReLU(0.2)                
+        self.dconv52   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.drelu52   = nn.LeakyReLU(0.2)    
+
+        self.up6       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv61   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, 1, kernel_size=3, stride=1, padding=1))
+        self.drelu61   = nn.LeakyReLU(0.2)                
+        self.dconv62   = nn.utils.spectral_norm(torch.nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1))
+        self.drelu62   = nn.LeakyReLU(0.2)    
+
+        # Head
+        self.enc_out   = nn.Sequential(nn.Flatten(), nn.Dropout(p=0.3, inplace=True), nn.Linear(512, 1))
+        self.dec_out   = nn.Conv2d(in_channels, 1, 1)
+        
+        self.__init_weights()
+
+    def __init_weights(self):
+        for m in self.modules():
+            if type(m) in {nn.Conv2d, nn.Linear}:                
+                m.weight.data.normal_(0, 0.01)
+                if hasattr(m.bias, 'data'):
+                    m.bias.data.fill_(0)
+
+    def forward(self, input):
+        input = self.window_filter(input)
+        
+        # Encoder
+        x = self.relu11(self.conv11(input))
+        x1 = self.relu12(self.conv12(x))
+        x = self.down1(x1)
+        
+        x = self.relu21(self.conv21(x))
+        x2 = self.relu22(self.conv22(x))
+        x = self.down2(x2)
+        
+        x = self.relu31(self.conv31(x))
+        x3 = self.relu32(self.conv32(x))
+        x = self.down3(x3)
+        
+        x = self.relu41(self.conv41(x))
+        x4 = self.relu42(self.conv42(x))
+        x = self.down4(x4)
+        
+        x = self.relu51(self.conv51(x))
+        x5 = self.relu52(self.conv52(x))
+        x = self.down5(x5)
+        
+        x = self.relu61(self.conv51(x))
+        x6 = self.relu62(self.conv52(x))
+        x = self.down6(x6)
+        
+        # Bot
+        x = self.brelu(self.bconv(x))
+        x_bot = self.brelu(self.bconv(x))                
+        
+        # Decoder
+        x = self.up1(x_bot)
+        x = self.drelu11(self.dconv11(torch.cat([x, x6], dim=1)))
+        x = self.drelu12(self.dconv12(x))                
+        
+
+        x = self.up2(x)
+        x = self.drelu21(self.dconv21(torch.cat([x, x5], dim=1)))
+        x = self.drelu22(self.dconv22(x))              
+        
+
+        x = self.up3(x)
+        x = self.drelu31(self.dconv31(torch.cat([x, x4], dim=1)))
+        x = self.drelu32(self.dconv32(x))              
+        
+
+        x = self.up4(x)
+        x = self.drelu41(self.dconv41(torch.cat([x, x3], dim=1)))
+        x = self.drelu42(self.dconv42(x))              
+        
+
+        x = self.up5(x)
+        x = self.drelu51(self.dconv51(torch.cat([x, x2], dim=1)))
+        x = self.drelu52(self.dconv52(x))              
+        
+
+        x = self.up6(x)
+        x = self.drelu61(self.dconv61(torch.cat([x, x1], dim=1)))
+        x = self.drelu62(self.dconv62(x))              
+
+        x_enc = self.enc_out(x_bot) 
+        x_dec = self.dec_out(x)
+
+        return x_enc, x_dec
+
+    def window_filter(self, x):
+        weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+        weight[0, :, :, :] = 50.0
+        weight[1, :, :, :] = 31.250
+        weight[2, :, :, :] = 45.455
+        weight[3, :, :, :] = 1.464
+        weight[4, :, :, :] = 11.628
+        bias    = torch.ones(size=(5,)).cuda()        
+        bias[0] =  -12.5
+        bias[1] =  -7.687
+        bias[2] =  -11.682
+        bias[3] =  -0.081
+        bias[4] =  -2.465        
+
+        x = F.conv2d(x, weight, bias)
+        x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+        return x
+
+class Fourier_UNet(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        # Enc
+        self.conv11    = FFT_Conv2d(in_channels*5, out_channels)
+        self.relu11    = nn.LeakyReLU(0.2)
+        self.conv12    = FFT_Conv2d(out_channels, out_channels)
+        self.relu12    = nn.LeakyReLU(0.2)        
+        self.down1     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1))
+
+        self.conv21    = FFT_Conv2d(out_channels, out_channels*2)
+        self.relu21    = nn.LeakyReLU(0.2)
+        self.conv22    = FFT_Conv2d(out_channels*2, out_channels*2)
+        self.relu22    = nn.LeakyReLU(0.2)
+        self.down2     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=4, stride=2, padding=1))
+
+        self.conv31    = FFT_Conv2d(out_channels*2, out_channels*4)
+        self.relu31    = nn.LeakyReLU(0.2)
+        self.conv32    = FFT_Conv2d(out_channels*4, out_channels*4)
+        self.relu32    = nn.LeakyReLU(0.2)
+        self.down3     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=4, stride=2, padding=1))
+
+        self.conv41    = FFT_Conv2d(out_channels*4, out_channels*8)
+        self.relu41    = nn.LeakyReLU(0.2)
+        self.conv42    = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.relu42    = nn.LeakyReLU(0.2)
+        self.down4     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        self.conv51    = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.relu51    = nn.LeakyReLU(0.2)
+        self.conv52    = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.relu52    = nn.LeakyReLU(0.2)
+        self.down5     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+        
+        self.conv61    = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.relu61    = nn.LeakyReLU(0.2)
+        self.conv62    = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.relu62    = nn.LeakyReLU(0.2)
+        self.down6     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        # Bot
+        self.bconv    = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.brelu    = nn.LeakyReLU(0.2)                
+        self.bconv    = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.brelu    = nn.LeakyReLU(0.2)                
+
+        # Dec
+        self.up1       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv11   = FFT_Conv2d(out_channels*8*2, out_channels*8)
+        self.drelu11   = nn.LeakyReLU(0.2)                
+        self.dconv12   = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.drelu12   = nn.LeakyReLU(0.2)        
+
+        self.up2       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv21   = FFT_Conv2d(out_channels*8*2, out_channels*8)
+        self.drelu21   = nn.LeakyReLU(0.2)                
+        self.dconv22   = FFT_Conv2d(out_channels*8, out_channels*8)
+        self.drelu22   = nn.LeakyReLU(0.2)        
+
+        self.up3       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv31   = FFT_Conv2d(out_channels*8*2, out_channels*4)
+        self.drelu31   = nn.LeakyReLU(0.2)                
+        self.dconv32   = FFT_Conv2d(out_channels*4, out_channels*4)
+        self.drelu32   = nn.LeakyReLU(0.2)        
+
+        self.up4       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv41   = FFT_Conv2d(out_channels*4*2, out_channels*2)
+        self.drelu41   = nn.LeakyReLU(0.2)                
+        self.dconv42   = FFT_Conv2d(out_channels*2, out_channels*2)
+        self.drelu42   = nn.LeakyReLU(0.2)        
+
+        self.up5       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv51   = FFT_Conv2d(out_channels*2*2, out_channels)
+        self.drelu51   = nn.LeakyReLU(0.2)                
+        self.dconv52   = FFT_Conv2d(out_channels, out_channels)
+        self.drelu52   = nn.LeakyReLU(0.2)    
+
+        self.up6       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv61   = FFT_Conv2d(out_channels*2, 1)
+        self.drelu61   = nn.LeakyReLU(0.2)                
+        self.dconv62   = FFT_Conv2d(1, 1)
+        self.drelu62   = nn.LeakyReLU(0.2)    
+
+        # Head
+        self.enc_out   = nn.Sequential(nn.Flatten(), nn.Dropout(p=0.3, inplace=True), nn.Linear(512, 1))
+        self.dec_out   = nn.Conv2d(in_channels, 1, 1)
+        
+        self.__init_weights()
+
+    def __init_weights(self):
+        for m in self.modules():
+            if type(m) in {nn.Conv2d, nn.Linear}:                
+                m.weight.data.normal_(0, 0.01)
+                if hasattr(m.bias, 'data'):
+                    m.bias.data.fill_(0)
+
+    def forward(self, input):
+        input = self.window_filter(input)
+        
+        # Encoder
+        x = self.relu11(self.conv11(input))
+        x1 = self.relu12(self.conv12(x))
+        x = self.down1(x1)
+        
+        x = self.relu21(self.conv21(x))
+        x2 = self.relu22(self.conv22(x))
+        x = self.down2(x2)
+        
+        x = self.relu31(self.conv31(x))
+        x3 = self.relu32(self.conv32(x))
+        x = self.down3(x3)
+        
+        x = self.relu41(self.conv41(x))
+        x4 = self.relu42(self.conv42(x))
+        x = self.down4(x4)
+        
+        x = self.relu51(self.conv51(x))
+        x5 = self.relu52(self.conv52(x))
+        x = self.down5(x5)
+        
+        x = self.relu61(self.conv51(x))
+        x6 = self.relu62(self.conv52(x))
+        x = self.down6(x6)
+        
+        # Bot
+        x = self.brelu(self.bconv(x))
+        x_bot = self.brelu(self.bconv(x))                
+        
+        # Decoder
+        x = self.up1(x_bot)
+        x = self.drelu11(self.dconv11(torch.cat([x, x6], dim=1)))
+        x = self.drelu12(self.dconv12(x))                
+        
+
+        x = self.up2(x)
+        x = self.drelu21(self.dconv21(torch.cat([x, x5], dim=1)))
+        x = self.drelu22(self.dconv22(x))              
+        
+
+        x = self.up3(x)
+        x = self.drelu31(self.dconv31(torch.cat([x, x4], dim=1)))
+        x = self.drelu32(self.dconv32(x))              
+        
+
+        x = self.up4(x)
+        x = self.drelu41(self.dconv41(torch.cat([x, x3], dim=1)))
+        x = self.drelu42(self.dconv42(x))              
+        
+
+        x = self.up5(x)
+        x = self.drelu51(self.dconv51(torch.cat([x, x2], dim=1)))
+        x = self.drelu52(self.dconv52(x))              
+        
+
+        x = self.up6(x)
+        x = self.drelu61(self.dconv61(torch.cat([x, x1], dim=1)))
+        x = self.drelu62(self.dconv62(x))              
+
+        # Head
+        x_enc = self.enc_out(x_bot) 
+        x_dec = self.dec_out(x)
+
+        return x_enc, x_dec
+
+    def window_filter(self, x):
+        weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+        weight[0, :, :, :] = 50.0
+        weight[1, :, :, :] = 31.250
+        weight[2, :, :, :] = 45.455
+        weight[3, :, :, :] = 1.464
+        weight[4, :, :, :] = 11.628
+        bias    = torch.ones(size=(5,)).cuda()        
+        bias[0] =  -12.5
+        bias[1] =  -7.687
+        bias[2] =  -11.682
+        bias[3] =  -0.081
+        bias[4] =  -2.465        
+
+        x = F.conv2d(x, weight, bias)
+        x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+        return x
+
+class FDGAN(nn.Module):
+    def __init__(self):
+        super(FDGAN, self).__init__()
+        # Generator
+        self.Generator             = ResFFT_Generator()
+
+        # Discriminator
+        self.Image_Discriminator   = Image_UNet(in_channels=1, out_channels=64)
+        self.Fourier_Discriminator = Fourier_UNet(in_channels=1, out_channels=64)
+
+        # LOSS
+        # self.gan_metric    = nn.BCEWithLogitsLoss()
+        self.gan_metric      = ls_gan
+        
+        self.pixel_loss     = CharbonnierLoss()
+        self.fourier_loss   = MSFRLoss()        
 
 
+    def Image_d_loss(self, x, y):
+        fake                   = self.Generator(x).detach()   
+        real_enc,  real_dec    = self.Image_Discriminator(DiffAugment(y))
+        fake_enc,  fake_dec    = self.Image_Discriminator(DiffAugment(fake))
+        input_enc, input_dec   = self.Image_Discriminator(DiffAugment(x))
+        
+        disc_loss = self.gan_metric(real_enc, 1.) + self.gan_metric(real_dec, 1.) + \
+                    self.gan_metric(fake_enc, 0.) + self.gan_metric(fake_dec, 0.) + \
+                    self.gan_metric(input_enc, 0.) + self.gan_metric(input_dec, 0.)
+
+        return disc_loss
+
+
+    def Fourier_d_loss(self, x, y):
+        fourier_fake                           = self.Generator(x).detach()  
+        fourier_real_enc,   fourier_real_dec   = self.Fourier_Discriminator(DiffAugment(y))
+        fourier_fake_enc,   fourier_fake_dec   = self.Fourier_Discriminator(DiffAugment(fourier_fake))
+        fourier_input_enc,  fourier_input_dec  = self.Fourier_Discriminator(DiffAugment(x))
+
+        disc_loss = self.gan_metric(fourier_real_enc, 1.) + self.gan_metric(fourier_real_dec, 1.) + \
+                    self.gan_metric(fourier_fake_enc, 0.) + self.gan_metric(fourier_fake_dec, 0.) + \
+                    self.gan_metric(fourier_input_enc, 0.) + self.gan_metric(fourier_input_dec, 0.)
+        
+        return disc_loss
+
+
+    def g_loss(self, x, y):
+        fake                              = self.Generator(x)
+        image_gen_enc,   image_gen_dec    = self.Image_Discriminator(fake)
+        fourier_gen_enc, fourier_gen_dec  = self.Fourier_Discriminator(fake)
+        
+        image_gen_loss                = self.gan_metric(image_gen_enc, 1.) + self.gan_metric(image_gen_dec, 1.)
+        fourier_gen_loss              = self.gan_metric(fourier_gen_enc, 1.) + self.gan_metric(fourier_gen_dec, 1.)
+
+        adv_loss     = 0.1*image_gen_loss + 0.1*fourier_gen_loss 
+        pix_loss     = 1.0*self.pixel_loss(fake, y)
+        fourier_loss = 1.0*self.fourier_loss(fake, y)
+
+        total_loss = adv_loss + pix_loss + fourier_loss
+
+        return total_loss
+
+
+# New Domain
+class Fourier_domain_UNet(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        # Enc
+        self.conv11    = nn.utils.spectral_norm(torch.nn.Conv2d(in_channels*5*2, out_channels, kernel_size=3, stride=1, padding=1))
+        self.relu11    = nn.LeakyReLU(0.2)
+        self.conv12    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.relu12    = nn.LeakyReLU(0.2)        
+        self.down1     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1))
+
+        self.conv21    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.relu21    = nn.LeakyReLU(0.2)
+        self.conv22    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.relu22    = nn.LeakyReLU(0.2)
+        self.down2     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=4, stride=2, padding=1))
+
+        self.conv31    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu31    = nn.LeakyReLU(0.2)
+        self.conv32    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu32    = nn.LeakyReLU(0.2)
+        self.down3     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=4, stride=2, padding=1))
+
+        self.conv41    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu41    = nn.LeakyReLU(0.2)
+        self.conv42    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu42    = nn.LeakyReLU(0.2)
+        self.down4     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        self.conv51    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu51    = nn.LeakyReLU(0.2)
+        self.conv52    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu52    = nn.LeakyReLU(0.2)
+        self.down5     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+        
+        self.conv61    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu61    = nn.LeakyReLU(0.2)
+        self.conv62    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu62    = nn.LeakyReLU(0.2)
+        self.down6     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        # Bot
+        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.brelu    = nn.LeakyReLU(0.2)                
+        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.brelu    = nn.LeakyReLU(0.2)                
+
+        # Dec
+        self.up1       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv11   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu11   = nn.LeakyReLU(0.2)                
+        self.dconv12   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu12   = nn.LeakyReLU(0.2)        
+
+        self.up2       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv21   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu21   = nn.LeakyReLU(0.2)                
+        self.dconv22   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.drelu22   = nn.LeakyReLU(0.2)        
+
+        self.up3       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv31   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.drelu31   = nn.LeakyReLU(0.2)                
+        self.dconv32   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.drelu32   = nn.LeakyReLU(0.2)        
+
+        self.up4       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv41   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.drelu41   = nn.LeakyReLU(0.2)                
+        self.dconv42   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.drelu42   = nn.LeakyReLU(0.2)        
+
+        self.up5       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv51   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2*2, out_channels, kernel_size=3, stride=1, padding=1))
+        self.drelu51   = nn.LeakyReLU(0.2)                
+        self.dconv52   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.drelu52   = nn.LeakyReLU(0.2)    
+
+        self.up6       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.dconv61   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, 1, kernel_size=3, stride=1, padding=1))
+        self.drelu61   = nn.LeakyReLU(0.2)                
+        self.dconv62   = nn.utils.spectral_norm(torch.nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1))
+        self.drelu62   = nn.LeakyReLU(0.2)    
+
+        # Head
+        self.enc_out   = nn.Sequential(nn.Flatten(), nn.Dropout(p=0.3, inplace=True), nn.Linear(512, 1))
+        self.dec_out   = nn.Conv2d(in_channels, 1, 1)
+        
+        self.__init_weights()
+
+    def __init_weights(self):
+        for m in self.modules():
+            if type(m) in {nn.Conv2d, nn.Linear}:                
+                m.weight.data.normal_(0, 0.01)
+                if hasattr(m.bias, 'data'):
+                    m.bias.data.fill_(0)
+
+    def forward(self, input):
+        input = self.window_filter(input)
+        input  = torch.fft.fft2(input, norm='backward')
+        input  = torch.fft.fftshift(input)
+        input  = torch.cat([input.real, input.imag], dim=1)
+
+        # Encoder
+        x = self.relu11(self.conv11(input))
+        x1 = self.relu12(self.conv12(x))
+        x = self.down1(x1)
+        
+        x = self.relu21(self.conv21(x))
+        x2 = self.relu22(self.conv22(x))
+        x = self.down2(x2)
+        
+        x = self.relu31(self.conv31(x))
+        x3 = self.relu32(self.conv32(x))
+        x = self.down3(x3)
+        
+        x = self.relu41(self.conv41(x))
+        x4 = self.relu42(self.conv42(x))
+        x = self.down4(x4)
+        
+        x = self.relu51(self.conv51(x))
+        x5 = self.relu52(self.conv52(x))
+        x = self.down5(x5)
+        
+        x = self.relu61(self.conv51(x))
+        x6 = self.relu62(self.conv52(x))
+        x = self.down6(x6)
+        
+        # Bot
+        x = self.brelu(self.bconv(x))
+        x_bot = self.brelu(self.bconv(x))                
+        
+        # Decoder
+        x = self.up1(x_bot)
+        x = self.drelu11(self.dconv11(torch.cat([x, x6], dim=1)))
+        x = self.drelu12(self.dconv12(x))                
+        
+
+        x = self.up2(x)
+        x = self.drelu21(self.dconv21(torch.cat([x, x5], dim=1)))
+        x = self.drelu22(self.dconv22(x))              
+        
+
+        x = self.up3(x)
+        x = self.drelu31(self.dconv31(torch.cat([x, x4], dim=1)))
+        x = self.drelu32(self.dconv32(x))              
+        
+
+        x = self.up4(x)
+        x = self.drelu41(self.dconv41(torch.cat([x, x3], dim=1)))
+        x = self.drelu42(self.dconv42(x))              
+        
+
+        x = self.up5(x)
+        x = self.drelu51(self.dconv51(torch.cat([x, x2], dim=1)))
+        x = self.drelu52(self.dconv52(x))              
+        
+
+        x = self.up6(x)
+        x = self.drelu61(self.dconv61(torch.cat([x, x1], dim=1)))
+        x = self.drelu62(self.dconv62(x))              
+
+        x_enc = self.enc_out(x_bot) 
+        x_dec = self.dec_out(x)
+
+        return x_enc, x_dec
+
+    def window_filter(self, x):
+        weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+        weight[0, :, :, :] = 50.0
+        weight[1, :, :, :] = 31.250
+        weight[2, :, :, :] = 45.455
+        weight[3, :, :, :] = 1.464
+        weight[4, :, :, :] = 11.628
+        bias    = torch.ones(size=(5,)).cuda()        
+        bias[0] =  -12.5
+        bias[1] =  -7.687
+        bias[2] =  -11.682
+        bias[3] =  -0.081
+        bias[4] =  -2.465        
+
+        x = F.conv2d(x, weight, bias)
+        x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+        return x
+
+class FDGAN_domain(nn.Module):
+    def __init__(self):
+        super(FDGAN_domain, self).__init__()
+        # Generator
+        self.Generator             = ResFFT_Generator()
+
+        # Discriminator
+        self.Image_Discriminator   = Image_UNet(in_channels=1, out_channels=64)
+        self.Fourier_Discriminator = Fourier_domain_UNet(in_channels=1, out_channels=64)
+
+        # LOSS
+        # self.gan_metric    = nn.BCEWithLogitsLoss()
+        self.gan_metric      = ls_gan
+        
+        self.pixel_loss     = CharbonnierLoss()
+        self.fourier_loss   = MSFRLoss()        
+
+
+    def Image_d_loss(self, x, y):
+        fake                   = self.Generator(x).detach()   
+        real_enc,  real_dec    = self.Image_Discriminator(DiffAugment(y))
+        fake_enc,  fake_dec    = self.Image_Discriminator(DiffAugment(fake))
+        input_enc, input_dec   = self.Image_Discriminator(DiffAugment(x))
+        
+        disc_loss = self.gan_metric(real_enc, 1.) + self.gan_metric(real_dec, 1.) + \
+                    self.gan_metric(fake_enc, 0.) + self.gan_metric(fake_dec, 0.) + \
+                    self.gan_metric(input_enc, 0.) + self.gan_metric(input_dec, 0.)
+
+        return disc_loss
+
+
+    def Fourier_d_loss(self, x, y):
+        fourier_fake                           = self.Generator(x).detach() 
+        fourier_real_enc,   fourier_real_dec   = self.Fourier_Discriminator(y)
+        fourier_fake_enc,   fourier_fake_dec   = self.Fourier_Discriminator(fourier_fake)
+        fourier_input_enc,  fourier_input_dec  = self.Fourier_Discriminator(x)
+
+        disc_loss = self.gan_metric(fourier_real_enc, 1.) + self.gan_metric(fourier_real_dec, 1.) + \
+                    self.gan_metric(fourier_fake_enc, 0.) + self.gan_metric(fourier_fake_dec, 0.) + \
+                    self.gan_metric(fourier_input_enc, 0.) + self.gan_metric(fourier_input_dec, 0.)
+        
+        return disc_loss
+
+
+    def g_loss(self, x, y):
+        fake                              = self.Generator(x)
+        image_gen_enc,   image_gen_dec    = self.Image_Discriminator(fake)
+        fourier_gen_enc, fourier_gen_dec  = self.Fourier_Discriminator(fake)
+        
+        image_gen_loss                = self.gan_metric(image_gen_enc, 1.) + self.gan_metric(image_gen_dec, 1.)
+        fourier_gen_loss              = self.gan_metric(fourier_gen_enc, 1.) + self.gan_metric(fourier_gen_dec, 1.)
+
+        adv_loss     = 0.1*image_gen_loss + 0.1*fourier_gen_loss 
+        pix_loss     = 1.0*self.pixel_loss(fake, y)
+        fourier_loss = 10.0*self.fourier_loss(fake, y)
+
+        total_loss = adv_loss + pix_loss + fourier_loss
+
+        return total_loss

@@ -16,7 +16,7 @@ from arch.Markovian_Patch_GAN.networks import Markovian_Patch_GAN
 from arch.DUGAN.networks import DUGAN
 # from arch.SACNN.model import SACNN, AutoEncoder_2D
     # Ours Works
-from arch.Ours.network import ResFFT_LFSPADE, ResFFT_Freq_SPADE_Att, FSGAN, FDGAN_PatchGAN
+from arch.Ours.network import ResFFT_LFSPADE, ResFFT_Freq_SPADE_Att, FSGAN, FDGAN_PatchGAN, FDGAN, FDGAN_domain
 
 
 
@@ -63,6 +63,11 @@ def create_model(name):
     elif name == "FDGAN_PatchGAN":
         model = FDGAN_PatchGAN()    
 
+    elif name == "FDGAN":
+        model = FDGAN()
+
+    elif name == "FDGAN_domain":
+        model = FDGAN_domain()
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('Number of Learnable Params:', n_parameters)   

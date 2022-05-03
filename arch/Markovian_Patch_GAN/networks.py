@@ -7,15 +7,16 @@ from math import exp
 
 
 # Referemce: https://github.com/reach2sbera/ldct_nonlocal
+# Warning: Even though this code is official, the STD loss is very strange. It is different with paper fomulation...
 
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size//2)**2/float(2*sigma**2)) for x in range(window_size)])
     return gauss/gauss.sum()
 
 def create_window(window_size, channel):
-    _1D_window = gaussian(window_size, 3.5).unsqueeze(1)
+    _1D_window = gaussian(window_size=window_size, sigma=3.5).unsqueeze(1)  # the sigma = 1.5 is shown in the paper value, but sigma = 3.5 is shown in the code...
     _2D_window =_1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
-    window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
+    window     = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
     return window.cuda()
 
 def create_mask(neighborhood_size, SIZE):
@@ -29,23 +30,25 @@ def create_mask(neighborhood_size, SIZE):
 
 
 
+# Even though this code is official, the STD loss is very strange. It is different with paper fomulation...
+# https://en.wikipedia.org/wiki/Standard_deviation
 
 class STD(torch.nn.Module):
-    def __init__(self, window_size = 5):
+    def __init__(self, window_size=5):
         super(STD, self).__init__()
         self.window_size = window_size
-        self.channel=1
+        self.channel = 1
         self.softmax = torch.nn.LogSoftmax(dim=1)
-        self.window=create_window(self.window_size, self.channel)
-        self.window.to(torch.device('cuda'))
+        self.window  = create_window(self.window_size, self.channel).cuda()
+
     def forward(self, img):
-        mu = F.conv2d(img, self.window, padding = self.window_size//2, groups = self.channel)
-        mu_sq=mu.pow(2)
-        sigma_sq = F.conv2d(img*img, self.window, padding = self.window_size//2, groups = self.channel) - mu_sq
-        B,C,W,H=sigma_sq.shape
-        sigma_sq=torch.flatten(sigma_sq, start_dim=1)
-        noise_map = self.softmax(sigma_sq)
-        noise_map=torch.reshape(noise_map,[B,C,W,H])
+        mu         = F.conv2d(img, self.window, padding = self.window_size//2, groups = self.channel)
+        mu_sq      = mu.pow(2)
+        sigma_sq   = F.conv2d(img*img, self.window, padding = self.window_size//2, groups = self.channel) - mu_sq
+        B, C, W, H = sigma_sq.shape
+        sigma_sq   = torch.flatten(sigma_sq, start_dim=1)
+        noise_map  = self.softmax(sigma_sq)
+        noise_map  = torch.reshape(noise_map,[B,C,W,H])
         return noise_map
 
 
@@ -53,11 +56,46 @@ class NCMSE(nn.Module):
     def __init__(self):
         super(NCMSE, self).__init__()
         self.std=STD()
+
     def forward(self, out_image, gt_image, org_image):
-        loss = torch.mean(torch.mul(self.std(org_image - gt_image), torch.pow(out_image - gt_image, 2))) 
+        loss = torch.mean( torch.mul(self.std(org_image - gt_image), torch.pow(out_image - gt_image, 2)) )   # self.std(org_image - gt_image) is p(x, y) in paper.
         return loss
 
     
+'''
+# I think the below code is right.
+
+class STD(torch.nn.Module):
+    def __init__(self, window_size=5):
+        super(STD, self).__init__()
+        self.window_size = window_size
+        self.channel = 1
+        self.softmax = torch.nn.LogSoftmax(dim=1)
+        self.window  = create_window(self.window_size, self.channel).cuda()
+
+    def forward(self, diff):
+        diff_sq_mean  = F.conv2d(diff*diff, self.window, padding = self.window_size//2, groups = self.channel).mean(dim=1, keepdim=True) 
+        mu_sq         = F.conv2d(diff,      self.window, padding = self.window_size//2, groups = self.channel).mean(dim=1, keepdim=True).pow(2)
+        sqrt_result   = torch.sqrt(diff_sq_mean - mu_sq)
+        noise_map     = self.softmax(sqrt_result)
+
+        return noise_map
+
+
+class NCMSE(nn.Module):
+    def __init__(self):
+        super(NCMSE, self).__init__()
+        self.std=STD()
+
+    def forward(self, out_image, gt_image, org_image):
+        loss = torch.mean( torch.mul(self.std(org_image - gt_image), torch.pow(out_image - gt_image, 2)) )   # self.std(org_image - gt_image) is p(x, y) in paper.
+        return loss
+
+
+'''
+
+
+
 
 
 
@@ -149,19 +187,19 @@ class UNet(nn.Module):
   def forward(self,x):
 
       x=self.conv1(x)
-    #   print("c1 == ", x.shape)  
+
       x1=self.layer1(x)
-    #   print("c2 == ", x1.shape)
+    
       x=self.pool1(x1)
-    #   print("c3 == ", x.shape)
+    
       x2=self.layer2(x)
-    #   print("c4 == ", x2.shape)
+    
       x=self.pool2(x2)
-    #   print("c5 == ", x.shape)
+    
       x=self.layer3(x)
-    #   print("c6 == ", x.shape)
+    
       x=self.pool3(x)
-    #   print("c7 == ", x.shape)
+    
 
       x=self.layer4(torch.cat((x2 , x),1))
 
@@ -171,7 +209,6 @@ class UNet(nn.Module):
 
       x=self.conv2(x)
 
-    #   return F.relu(x)
       return x
 
 class SNConvWithActivation(torch.nn.Module):

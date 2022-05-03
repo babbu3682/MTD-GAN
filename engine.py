@@ -648,15 +648,13 @@ def test_FSGAN_Previous(model, data_loader, device, save_dir):
 
 
 # 2. FDGAN
-def train_FDGAN_Previous(model, data_loader, optimizer_G, optimizer_Img_D, optimizer_Fourier_D, device, epoch, patch_training):
+def train_FDGAN_Ours(model, data_loader, optimizer_G, optimizer_Image_D, optimizer_Fourier_D, device, epoch, patch_training, print_freq, batch_size):
     model.Generator.train(True)
-    model.Img_discriminator.train(True)
-    model.Fourier_discriminator.train(True)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    model.Image_Discriminator.train(True)
+    model.Fourier_Discriminator.train(True)
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 1  
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         
@@ -668,125 +666,76 @@ def train_FDGAN_Previous(model, data_loader, optimizer_G, optimizer_Img_D, optim
             input_n_20   = batch_data['n_20'].to(device).float()
             input_n_100  = batch_data['n_100'].to(device).float()
 
-        # Inference Setting
-        low_dose                      = input_n_20
-        full_dose                     = input_n_100
-        # mu, logvar, gen_full_dose     = model.Generator(low_dose)
-        gen_full_dose     = model.Generator(low_dose)
 
-        # Img Discriminator
-        optimizer_Img_D.zero_grad()
-        model.Img_discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            Img_D_loss = model.train_Img_Discriminator(full_dose, low_dose, gen_full_dose, prefix='Img_D', n_iter=epoch)
-            Img_D_loss.backward()
-            optimizer_Img_D.step()
-        
-        # Fourier Discriminator
+        # Discriminator
+            # Image D
+        optimizer_Image_D.zero_grad()
+        model.Image_Discriminator.zero_grad() 
+        Img_d_loss = model.Image_d_loss(input_n_20, input_n_100)
+        Img_d_loss.backward()
+        optimizer_Image_D.step()
+        metric_logger.update(Img_d_loss=Img_d_loss)
+            # Fourier D
         optimizer_Fourier_D.zero_grad()
-        model.Fourier_discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            Fourier_D_loss = model.train_Fourier_Discriminator(full_dose, low_dose, gen_full_dose, prefix='Fourier_D', n_iter=epoch)
-            Fourier_D_loss.backward()
-            optimizer_Fourier_D.step()        
+        model.Fourier_Discriminator.zero_grad()        
+        Fourier_d_loss = model.Fourier_d_loss(input_n_20, input_n_100)
+        Fourier_d_loss.backward()
+        optimizer_Fourier_D.step()        
+        metric_logger.update(Fourier_d_loss=Fourier_d_loss)
 
         # Generator
         optimizer_G.zero_grad()
-        model.Generator.zero_grad()     # Same as optimizer zero grad()
-        
-            # Low
-        img_gen_enc, img_gen_dec   = model.Img_discriminator(gen_full_dose)
-        img_gen_loss               = model.gan_metric(img_gen_enc, torch.ones_like(img_gen_enc)) + model.gan_metric(img_gen_dec, torch.ones_like(img_gen_dec))
-            # High
-        fourier_gen_enc, fourier_gen_dec = model.Fourier_discriminator(gen_full_dose)
-        fourier_gen_loss                 = model.gan_metric(fourier_gen_enc, torch.ones_like(fourier_gen_enc)) + model.gan_metric(fourier_gen_dec, torch.ones_like(fourier_gen_dec))
-
-        # adv_loss  = 0.1*low_gen_loss + 0.1*high_gen_loss 
-        # pix_loss  = 1.0*F.l1_loss(gen_full_dose, full_dose)         
-        # enc_loss  = 0.05*model.KLDLoss(mu, logvar)
-        # G_loss = adv_loss + pix_loss + enc_loss
-
-        adv_loss   = 0.1*img_gen_loss + 0.1*fourier_gen_loss 
-        pix_loss1  = 1.0*model.pixel_metric1(gen_full_dose, full_dose) 
-        pix_loss2  = 0.5*model.pixel_metric2(gen_full_dose, full_dose)
-        pix_loss3  = 0.5*model.pixel_metric3(gen_full_dose, full_dose)        
-
-        G_loss    = adv_loss + pix_loss1 + pix_loss2 + pix_loss3
-                 
-        G_loss.backward()        
+        model.Generator.zero_grad()
+        g_loss = model.g_loss(input_n_20, input_n_100)
+        g_loss.backward()        
         optimizer_G.step()
+        metric_logger.update(g_loss=g_loss)
 
-
-        G_dict = {}
-        G_dict.update({
-            'G_loss/img_gen_loss': img_gen_loss,
-            'G_loss/fourier_gen_loss': fourier_gen_loss,
-            'G_loss/pix_loss1': pix_loss1,
-            'G_loss/pix_loss2': pix_loss2,
-            'G_loss/pix_loss3': pix_loss3,
-            # 'G_loss/enc_loss': enc_loss,
-
-            'D_loss/Img_D_loss': Img_D_loss.item(),    
-            'D_loss/Fourier_D_loss': Fourier_D_loss.item(),
-        })
-
-        metric_logger.update(**G_dict)
         metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
         
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def valid_FDGAN_Previous(model, criterion, data_loader, device, epoch, save_dir):
+def valid_FDGAN_Ours(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
     model.Generator.eval()
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True)  
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
-    
-        if hasattr(model, 'module'):
-            if model.module._get_name() == "FDGAN":
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module.Generator, overlap=0.5, mode='constant')
-            else:
-                pred_n_100 = model.Generator(input_n_20)     
 
-        else :
-            if model._get_name() == "FDGAN":
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')     
-            else:
-                pred_n_100 = model.Generator(input_n_20)     
-
+        # pred_n_100 = model.Generator(input_n_20)     
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
+            
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()
         metric_logger.update(L1_loss=loss_value)
 
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
 
-    # Denormalize
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
     # PNG Save
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def test_FDGAN_Previous(model, data_loader, device, save_dir):
+def test_FDGAN_Ours(model, data_loader, device, save_dir):
     # switch to evaluation mode
     model.Generator.eval()
     
@@ -802,8 +751,8 @@ def test_FDGAN_Previous(model, data_loader, device, save_dir):
         input_n_100  = batch_data['n_100'].to(device).float()
         
         # Forward Generator
-        # pred_n_100 = model(input_n_20)
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
+        pred_n_100 = model.Generator(input_n_20)     
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
 
         os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
         os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
@@ -844,6 +793,7 @@ def test_FDGAN_Previous(model, data_loader, device, save_dir):
     print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
     print('\n')
     print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
+
 
 
 
