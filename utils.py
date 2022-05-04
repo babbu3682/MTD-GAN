@@ -185,5 +185,5 @@ def print_args_test(args):
     print('Dataset Folder Path: ', args.data_folder_dir)
     print('---------- Model ----------')
     print('Resume From: ', args.resume)
-    print('Checkpoint To: ', args.checkpoint_dir)
+    print('Save To: ', args.png_save_dir)
     print('Visible GPUs: ', args.cuda_visible_devices)

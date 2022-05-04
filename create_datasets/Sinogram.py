@@ -552,6 +552,27 @@ def TEST_Sinogram_Dataset_DCM():
 
     return Dataset(data=files, transform=transforms), default_collate_fn
 
+def TEST_Sinogram_Dataset_DCM_Windowing():
+    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
+    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
+
+    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
+    print("TEST [Total]  number = ", len(low_imgs))
+
+    transforms = Compose(
+        [
+            Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+            ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+            AddChanneld(keys=["n_20", "n_100"]),         
+
+            # Normalize
+            # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
+            ToTensord(keys=["n_20", "n_100"]),
+        ]
+    )        
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
+
 def TEST_Sinogram_Dataset_DCM_SACNN():
     low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/'))
     high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/'))

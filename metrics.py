@@ -12,14 +12,17 @@ from module.pytorch_ssim_3d import SSIM3D
 def compute_measure(x, y, pred, data_range):
     
     original_psnr = compute_PSNR(x, y, data_range)
+    print("original_psnr = ", original_psnr)
     original_ssim = compute_SSIM(x, y, data_range)
     original_rmse = compute_RMSE(x, y)
     
     pred_psnr     = compute_PSNR(pred, y, data_range)
+    print("pred_psnr = ", pred_psnr)
     pred_ssim     = compute_SSIM(pred, y, data_range)
     pred_rmse     = compute_RMSE(pred, y)
 
     gt_psnr       = compute_PSNR(y, y, data_range)
+    print("gt_psnr = ", gt_psnr)
     gt_ssim       = compute_SSIM(y, y, data_range)
     gt_rmse       = compute_RMSE(y, y)    
 

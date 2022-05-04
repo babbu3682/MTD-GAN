@@ -209,7 +209,7 @@ class UNet(nn.Module):
 
       x=self.conv2(x)
 
-      return x
+      return F.relu(x)
 
 class SNConvWithActivation(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, activation=torch.nn.LeakyReLU(0.2, inplace=True)):

@@ -148,30 +148,29 @@ class MSFRLoss(torch.nn.Module):
 ######################################################             LOSS           Class                      ########################################################
 ######################################################################################################################################################################
 
-class Perceptual_L1_Loss(torch.nn.Module):
-    def __init__(self, mode):
-        super().__init__()
-        self.loss_L1      = torch.nn.L1Loss()
-        self.loss_VGG     = VGGLoss(device='cuda')
-        self.mode = mode
+# class Perceptual_L1_Loss(torch.nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.loss_L1      = torch.nn.L1Loss()
+#         self.loss_VGG     = VGGLoss(device='cuda')
 
-    def forward(self, pred_n_40=None, pred_n_60=None, pred_n_80=None, pred_n_100=None, gt_20=None, gt_40=None, gt_60=None, gt_80=None, gt_100=None):
-        if self.mode == "multi_label" :
+#     def forward(self, pred_n_40=None, pred_n_60=None, pred_n_80=None, pred_n_100=None, gt_20=None, gt_40=None, gt_60=None, gt_80=None, gt_100=None):
+#         if self.mode == "multi_label" :
 
-            loss_n_40  = self.loss_VGG(pred_n_40,  gt_40)  + self.loss_L1(pred_n_40,  gt_40)
-            loss_n_60  = self.loss_VGG(pred_n_60,  gt_60)  + self.loss_L1(pred_n_60,  gt_60)
-            loss_n_80  = self.loss_VGG(pred_n_80,  gt_80)  + self.loss_L1(pred_n_80,  gt_80)
-            loss_n_100 = self.loss_VGG(pred_n_100, gt_100) + self.loss_L1(pred_n_100, gt_100)
+#             loss_n_40  = self.loss_VGG(pred_n_40,  gt_40)  + self.loss_L1(pred_n_40,  gt_40)
+#             loss_n_60  = self.loss_VGG(pred_n_60,  gt_60)  + self.loss_L1(pred_n_60,  gt_60)
+#             loss_n_80  = self.loss_VGG(pred_n_80,  gt_80)  + self.loss_L1(pred_n_80,  gt_80)
+#             loss_n_100 = self.loss_VGG(pred_n_100, gt_100) + self.loss_L1(pred_n_100, gt_100)
 
-            total_loss = loss_n_40 + loss_n_60 + loss_n_80 + loss_n_100
+#             total_loss = loss_n_40 + loss_n_60 + loss_n_80 + loss_n_100
 
-            return total_loss
+#             return total_loss
         
-        else :
+#         else :
 
-            loss_n_100 = self.loss_VGG(pred_n_100, gt_100) + self.loss_L1(pred_n_100, gt_100)
+#             loss_n_100 = self.loss_VGG(pred_n_100, gt_100) + self.loss_L1(pred_n_100, gt_100)
 
-            return loss_n_100
+#             return loss_n_100
 
 # class Perceptual_L1_MS_SSIM_Loss(torch.nn.Module):
 #     def __init__(self, mode):
@@ -315,15 +314,15 @@ class Charbonnier_Edge_MSFR_VGG_Loss(torch.nn.Module):
 
 
 
-def create_criterion(name, mode):
+def create_criterion(name):
     #### Select Loss
-    if name == 'Perceptual+L1 Loss':
-        criterion = Perceptual_L1_Loss(mode=mode)
+    # if name == 'Perceptual+L1 Loss':
+    #     criterion = Perceptual_L1_Loss(mode=mode)
 
     # elif name == 'Perceptual+L1+MS_SSIM Loss':
     #     criterion = Perceptual_L1_MS_SSIM_Loss(mode=mode)        
 
-    elif name == 'L2 Loss':
+    if name == 'L2 Loss':
         criterion = torch.nn.MSELoss()
 
     elif name == 'L1 Loss':

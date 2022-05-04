@@ -42,7 +42,7 @@ def get_args_parser():
     # Model parameters
     parser.add_argument('--model-name',      default='Sequence_SkipHidden_Unet_ALL',  type=str, help='model name')    
     parser.add_argument('--criterion',       default='Sequence_SkipHidden_Unet_loss', type=str, help='criterion name')    
-    parser.add_argument('--criterion_mode',  default='none', type=str,  help='criterion mode')  
+    # parser.add_argument('--criterion_mode',  default='none', type=str,  help='criterion mode')  
 
     # Training Option
     parser.add_argument('--patch_training',  default="FALSE",   type=str2bool, help='patch_training')    
@@ -108,12 +108,12 @@ def main(args):
     dataset_train, collate_fn_train = build_dataset(training_mode='train',  args=args)   
     dataset_valid, collate_fn_valid = build_dataset(training_mode='valid',  args=args)
 
-    data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True,  pin_memory=args.pin_mem, drop_last=True,  collate_fn=collate_fn_train)
-    data_loader_valid = torch.utils.data.DataLoader(dataset_valid, batch_size=1,               num_workers=args.num_workers, shuffle=True,  pin_memory=args.pin_mem, drop_last=False, collate_fn=collate_fn_valid) 
+    data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True,   pin_memory=args.pin_mem, drop_last=True,  collate_fn=collate_fn_train)
+    data_loader_valid = torch.utils.data.DataLoader(dataset_valid, batch_size=1,               num_workers=args.num_workers, shuffle=False,  pin_memory=args.pin_mem, drop_last=False, collate_fn=collate_fn_valid) 
 
     # Select Loss
     print(f"Creating criterion: {args.criterion}")
-    criterion = create_criterion(name=args.criterion, mode=args.criterion_mode)
+    criterion = create_criterion(name=args.criterion)
 
     # Select Model
     print(f"Creating model: {args.model_name}")
@@ -271,7 +271,7 @@ def main(args):
             valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
             print("Averaged valid_stats: ", valid_stats)
         # Transformer based
-        elif args.model_name == 'TED_Net' or args.model_name == 'Restormer' or args.model_name == 'CTformer': 
+        elif args.model_name == 'Restormer' or args.model_name == 'CTformer': 
             train_stats = train_Transformer_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.patch_training, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
             valid_stats = valid_Transformer_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
