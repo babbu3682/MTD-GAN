@@ -33,6 +33,9 @@ def build_dataset_test(args):
         else :
             dataset, collate_fn = TEST_Sinogram_Dataset_DCM()
 
+    elif args.data_folder_dir == 'TEST_Sinogram_Dataset_DCM_Clinical':        
+        dataset, collate_fn = TEST_Sinogram_Dataset_DCM_Clinical()
+
     # elif args.data_set == 'TEST_Sinogram_Dataset_DCM_SACNN': 
         # dataset, collate_fn = TEST_Sinogram_Dataset_DCM_SACNN()
     else: 

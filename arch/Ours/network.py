@@ -3158,7 +3158,6 @@ class FDGAN_PatchGAN(nn.Module):
 
 
 # New version...!
-
 def turn_on_spectral_norm(module):
     module_output = module
     if isinstance(module, torch.nn.Conv2d):
@@ -3376,7 +3375,7 @@ class Fourier_UNet(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         # Enc
-        self.conv11    = FFT_Conv2d(in_channels*5, out_channels)
+        self.conv11    = FFT_Conv2d(in_channels, out_channels)
         self.relu11    = nn.LeakyReLU(0.2)
         self.conv12    = FFT_Conv2d(out_channels, out_channels)
         self.relu12    = nn.LeakyReLU(0.2)        
@@ -3469,7 +3468,7 @@ class Fourier_UNet(nn.Module):
                     m.bias.data.fill_(0)
 
     def forward(self, input):
-        input = self.window_filter(input)
+        # input = self.window_filter(input)
         
         # Encoder
         x = self.relu11(self.conv11(input))
@@ -3536,23 +3535,23 @@ class Fourier_UNet(nn.Module):
 
         return x_enc, x_dec
 
-    def window_filter(self, x):
-        weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
-        weight[0, :, :, :] = 50.0
-        weight[1, :, :, :] = 31.250
-        weight[2, :, :, :] = 45.455
-        weight[3, :, :, :] = 1.464
-        weight[4, :, :, :] = 11.628
-        bias    = torch.ones(size=(5,)).cuda()        
-        bias[0] =  -12.5
-        bias[1] =  -7.687
-        bias[2] =  -11.682
-        bias[3] =  -0.081
-        bias[4] =  -2.465        
+    # def window_filter(self, x):
+    #     weight             = torch.ones(size=(5, 1, 1, 1)).cuda()      
+    #     weight[0, :, :, :] = 50.0
+    #     weight[1, :, :, :] = 31.250
+    #     weight[2, :, :, :] = 45.455
+    #     weight[3, :, :, :] = 1.464
+    #     weight[4, :, :, :] = 11.628
+    #     bias    = torch.ones(size=(5,)).cuda()        
+    #     bias[0] =  -12.5
+    #     bias[1] =  -7.687
+    #     bias[2] =  -11.682
+    #     bias[3] =  -0.081
+    #     bias[4] =  -2.465        
 
-        x = F.conv2d(x, weight, bias)
-        x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
-        return x
+    #     x = F.conv2d(x, weight, bias)
+    #     x = torch.minimum(torch.maximum(x, torch.tensor(0)), torch.tensor(1.0))
+    #     return x
 
 class FDGAN(nn.Module):
     def __init__(self):
@@ -3570,7 +3569,7 @@ class FDGAN(nn.Module):
         
         self.pixel_loss     = CharbonnierLoss()
         self.fourier_loss   = MSFRLoss()        
-
+        self.edge_loss      = EdgeLoss()
 
     def Image_d_loss(self, x, y):
         fake                   = self.Generator(x).detach()   
@@ -3606,11 +3605,12 @@ class FDGAN(nn.Module):
         image_gen_loss                = self.gan_metric(image_gen_enc, 1.) + self.gan_metric(image_gen_dec, 1.)
         fourier_gen_loss              = self.gan_metric(fourier_gen_enc, 1.) + self.gan_metric(fourier_gen_dec, 1.)
 
-        adv_loss     = 0.1*image_gen_loss + 0.1*fourier_gen_loss 
-        pix_loss     = 1.0*self.pixel_loss(fake, y)
-        fourier_loss = 1.0*self.fourier_loss(fake, y)
+        adv_loss     = image_gen_loss + fourier_gen_loss 
+        pix_loss     = 50.0*self.pixel_loss(fake, y)
+        fourier_loss = 50.0*self.fourier_loss(fake, y)
+        edge_loss    = 50.0*self.edge_loss(fake, y)
 
-        total_loss = adv_loss + pix_loss + fourier_loss
+        total_loss = adv_loss + pix_loss + fourier_loss + edge_loss
 
         return total_loss
 
@@ -3713,7 +3713,7 @@ class Fourier_domain_UNet(nn.Module):
                     m.bias.data.fill_(0)
 
     def forward(self, input):
-        input = self.window_filter(input)
+        input  = self.window_filter(input)
         input  = torch.fft.fft2(input, norm='backward')
         input  = torch.fft.fftshift(input)
         input  = torch.cat([input.real, input.imag], dim=1)
@@ -3816,7 +3816,7 @@ class FDGAN_domain(nn.Module):
         
         self.pixel_loss     = CharbonnierLoss()
         self.fourier_loss   = MSFRLoss()        
-
+        self.edge_loss      = EdgeLoss()
 
     def Image_d_loss(self, x, y):
         fake                   = self.Generator(x).detach()   
@@ -3852,10 +3852,11 @@ class FDGAN_domain(nn.Module):
         image_gen_loss                = self.gan_metric(image_gen_enc, 1.) + self.gan_metric(image_gen_dec, 1.)
         fourier_gen_loss              = self.gan_metric(fourier_gen_enc, 1.) + self.gan_metric(fourier_gen_dec, 1.)
 
-        adv_loss     = 0.1*image_gen_loss + 0.1*fourier_gen_loss 
-        pix_loss     = 1.0*self.pixel_loss(fake, y)
-        fourier_loss = 10.0*self.fourier_loss(fake, y)
+        adv_loss     = image_gen_loss + fourier_gen_loss 
+        pix_loss     = 50.0*self.pixel_loss(fake, y)
+        fourier_loss = 50.0*self.fourier_loss(fake, y)
+        edge_loss    = 50.0*self.edge_loss(fake, y)
 
-        total_loss = adv_loss + pix_loss + fourier_loss
+        total_loss = adv_loss + pix_loss + fourier_loss + edge_loss
 
         return total_loss

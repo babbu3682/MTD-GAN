@@ -65,17 +65,14 @@ def minmax_normalize(image, option=False):
     return image.astype('float32')
 
 
-######################################################                    collate_fn            ########################################################
+# collate_fn
 def default_collate_fn(batch):
     batch = list(filter(lambda x: x is not None, batch))
     return torch.utils.data.dataloader.default_collate(batch)
 
 
 
-######################################################                    Sinogram Task                             ########################################################
-from torchvision import transforms as vision_transforms
-
-
+# Sinogram Task
 
 def Sinogram_Dataset_DCM(mode, patch_training):
     if mode == 'train':
@@ -468,69 +465,7 @@ def Sinogram_Dataset_DCM_SACNN(mode, patch_training):
 
 
 
-######################################################                 TEST   Sinogram Task                             ########################################################
-
-def TEST_Sinogram_Dataset_OLD(mode, range_minus1_plus1):
-    if mode == 'sinogram':
-        low_imgs      = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Test/*/20/*/*/*.npy'))
-        high_imgs     = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_NPY/Test/*/X/*/*/*.npy'))
-
-        dcm_low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
-        dcm_high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
-
-        files = [{"low": low_name, "high": high_name, "dcm_low" : dcm_low, "dcm_high" : dcm_high} for low_name, high_name, dcm_low, dcm_high in zip(low_imgs, high_imgs, dcm_low_imgs, dcm_high_imgs)]
-          
-        print("TEST [Total]  number = ", len(low_imgs))
-
-        if range_minus1_plus1:
-            # CT에 맞는 Augmentation
-            transforms = Compose(
-                [
-                    LoadNumpyd(keys=["low", "high"]),
-                    AddChanneld(keys=["low", "high"]), 
-                    ToTensord(keys=["low", "high"]),
-                    
-                    # Unet_with_perceptual Option
-                    Lambdad(keys=["low", "high"], func=vision_transforms.Normalize(mean=(0.5), std=(0.5))),
-                ]
-            )            
-        else:
-            # CT에 맞는 Augmentation
-            transforms = Compose(
-                [
-                    LoadNumpyd(keys=["low", "high"]),
-                    AddChanneld(keys=["low", "high"]), 
-                    ToTensord(keys=["low", "high"]),
-                ]
-            )            
-
-    # follow dataset 미완성...
-    elif mode == 'follow':
-        low_imgs      = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_Low_Dose_CT_Grand_Challenge_dataset_3mm/Test/*/20/*/*/*.npy'))
-        high_imgs     = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_Low_Dose_CT_Grand_Challenge_dataset_3mm/Test/*/X/*/*/*.npy'))
-
-        dcm_low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
-        dcm_high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
-
-        files = [{"low": low_name, "high": high_name, "dcm_low" : dcm_low, "dcm_high" : dcm_high} for low_name, high_name, dcm_low, dcm_high in zip(low_imgs, high_imgs, dcm_low_imgs, dcm_high_imgs)]
-          
-        print("TEST [Total]  number = ", len(low_imgs))
-
-        # CT에 맞는 Augmentation
-        transforms = Compose(
-            [
-                LoadNumpyd(keys=["low", "high"]),
-                AddChanneld(keys=["low", "high"]), 
-                ToTensord(keys=["low", "high"]),
-                
-                # Unet_with_perceptual Option
-                Lambdad(keys=["low", "high"], func=vision_transforms.Normalize(mean=(0.5), std=(0.5))),
-            ]
-        )
-
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
-    
+# TEST   Sinogram Task
 def TEST_Sinogram_Dataset_DCM():
     low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
     high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
@@ -573,61 +508,25 @@ def TEST_Sinogram_Dataset_DCM_Windowing():
 
     return Dataset(data=files, transform=transforms), default_collate_fn
 
-def TEST_Sinogram_Dataset_DCM_SACNN():
-    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/'))
-    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/'))
 
-    first_list  = []
-    middle_list = []
-    last_list   = []
-    target_list = []
+# For Clinical
+def TEST_Sinogram_Dataset_DCM_Clinical():
+    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/clinical_dataset/low*.dcm'))
+    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/clinical_dataset/high*.dcm'))
 
-    for scan_path, target_path in zip(low_imgs, high_imgs):
-        input_list  = list_sort_nicely(glob.glob(scan_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
-        gt_list     = list_sort_nicely(glob.glob(target_path.replace('[sinogram]', '*') + '/*/*/*.dcm'))
-        
-        assert len(input_list) == len(gt_list)
-        
-        # for i in range(0, len(input_list)//3):
+    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
+    print("TEST [Total]  number = ", len(low_imgs))
 
-        #     first_list.append(input_list[i*3+0])
-        #     middle_list.append(input_list[i*3+1])
-        #     last_list.append(input_list[i*3+2])
-        #     target_list.append(gt_list[i*3+1])
-
-        for i in range(len(input_list)):
-            if i-1 == -1:
-                first_list.append(input_list[0])
-                middle_list.append(input_list[0])
-                last_list.append(input_list[1])
-                target_list.append(gt_list[0])                  
-
-            elif i+1 == len(input_list):
-                first_list.append(input_list[-2])
-                middle_list.append(input_list[-1])
-                last_list.append(input_list[-1])
-                target_list.append(gt_list[-1])  
-
-            else :
-                first_list.append(input_list[i-1])
-                middle_list.append(input_list[i])
-                last_list.append(input_list[i+1])
-                target_list.append(gt_list[i])  
-            
-
-    files = [{"n_20_f": n_20_f, "n_20_m": n_20_m, "n_20_l": n_20_l, "n_100": n_100, "path_n_20":n_20_m, "path_n_100":n_100} for n_20_f, n_20_m, n_20_l, n_100 in zip(first_list, middle_list, last_list, target_list)]            
-    print("Valid [Total]  number = ", len(low_imgs))
-
-    # CT에 맞는 Augmentation
     transforms = Compose(
         [
-            Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=get_pixels_hu),
-            Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=dicom_normalize),
-            AddChanneld(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),       
+            Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+            Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+            # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+            AddChanneld(keys=["n_20", "n_100"]),         
 
             # Normalize
-            # Lambdad(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"], func=functools.partial(minmax_normalize, option=False)),                   
-            ToTensord(keys=["n_20_f", "n_20_m", "n_20_l", "n_100"]),
+            # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
+            ToTensord(keys=["n_20", "n_100"]),
         ]
     )        
 

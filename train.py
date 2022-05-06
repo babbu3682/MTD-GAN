@@ -109,7 +109,7 @@ def main(args):
     dataset_valid, collate_fn_valid = build_dataset(training_mode='valid',  args=args)
 
     data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True,   pin_memory=args.pin_mem, drop_last=True,  collate_fn=collate_fn_train)
-    data_loader_valid = torch.utils.data.DataLoader(dataset_valid, batch_size=1,               num_workers=args.num_workers, shuffle=False,  pin_memory=args.pin_mem, drop_last=False, collate_fn=collate_fn_valid) 
+    data_loader_valid = torch.utils.data.DataLoader(dataset_valid, batch_size=1,               num_workers=args.num_workers, shuffle=True,   pin_memory=args.pin_mem, drop_last=False, collate_fn=collate_fn_valid) 
 
     # Select Loss
     print(f"Creating criterion: {args.criterion}")

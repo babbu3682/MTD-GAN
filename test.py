@@ -103,35 +103,43 @@ def main(args):
         test_stats = test_CNN_Based_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
         print("Averaged test stats: ", test_stats)
 
-    elif args.model_name == 'TED_Net' or args.model_name == 'Restormer': 
-        test_Transformer_Based_Previous(model, data_loader, device, args.save_dir)
+    elif args.model_name == 'CTformer' or args.model_name == 'Restormer': 
+        test_stats = test_Transformer_Based_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
+        print("Averaged test stats: ", test_stats)
 
         # Ours
     elif args.model_name == 'SPADE_UNet' or args.model_name == 'SPADE_UNet_Upgrade_3' or args.model_name == 'ResFFT_LFSPADE': 
-        test_CNN_Based_Ours(model, data_loader, device, args.save_dir)
+        test_stats = test_CNN_Based_Ours(model, criterion, data_loader_test, device, args.png_save_dir)
+        print("Averaged test stats: ", test_stats)
 
 
 
     # GAN based
         # Previous
     elif args.model_name == 'WGAN_VGG': 
-        test_WGAN_VGG_Previous(model, data_loader, device, args.save_dir)
+        test_stats = test_WGAN_VGG_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
+        print("Averaged test stats: ", test_stats)
 
     elif args.model_name == 'MAP_NN': 
-        test_MAP_NN_Previous(model, data_loader, device, args.save_dir)
+        test_stats = test_MAP_NN_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
+        print("Averaged test stats: ", test_stats)
 
     elif args.model_name == 'Markovian_Patch_GAN':         
-        test_Markovian_Patch_GAN_Previous(model, data_loader, device, args.save_dir)
+        test_stats = test_Markovian_Patch_GAN_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
+        print("Averaged test stats: ", test_stats)
 
     elif args.model_name == 'DU_GAN': 
-        test_DUGAN_Previous(model, data_loader, device, args.save_dir)
+        test_stats = test_DUGAN_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
+        print("Averaged test stats: ", test_stats)
 
         # Ours
     elif args.model_name == 'FDGAN_PatchGAN': 
-        test_FDGAN_PatchGAN_Ours(model, data_loader, device, args.save_dir)    
+        test_stats = test_FDGAN_PatchGAN_Ours(model, criterion, data_loader_test, device, args.png_save_dir)    
+        print("Averaged test stats: ", test_stats)
 
     elif args.model_name == 'FDGAN' or args.model_name == 'FDGAN_domain': 
-        test_FDGAN_Ours(model, data_loader, device, args.save_dir)    
+        test_stats = test_FDGAN_Ours(model, criterion, data_loader_test, device, args.png_save_dir)    
+        print("Averaged test stats: ", test_stats)
    
     else :
         pass
