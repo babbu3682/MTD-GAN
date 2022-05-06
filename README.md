@@ -127,14 +127,10 @@ python test.py \
 ``` -->
 
 
-## Upstream visualize
-### 1. Activation map
+## Fail training methods
+### [SACNN](https://github.com/mmlipku/sacnn), [SA-SNMP](https://github.com/reach2sbera/ldct_nonlocal)
 ```
-⏳ It's scheduled to be uploaded soon.
-```
-### 2. t-SNE
-```
-⏳ It's scheduled to be uploaded soon.
+⏳ The official code was performed, but the results were very poor, and we requested from the authors, but it was unresponsive.
 ```
 
 
