@@ -12,10 +12,6 @@ def build_dataset(training_mode, args):
         else:
             dataset, collate_fn = Sinogram_Dataset_DCM(mode=training_mode, patch_training=args.patch_training)
 
-
-    # elif args.data_set == 'Sinogram_Dataset_DCM_SACNN': 
-        # dataset, collate_fn = Sinogram_Dataset_DCM_SACNN(mode=training_mode, patch_training=args.patch_training)
-
     else: 
         raise Exception('Error...! args.data_folder_dir')
 
@@ -24,10 +20,7 @@ def build_dataset(training_mode, args):
 
 
 def build_dataset_test(args):
-    if args.data_folder_dir == 'TEST_Sinogram_OLD': 
-        dataset, collate_fn = TEST_Sinogram_Dataset_OLD(mode=args.training_mode, range_minus1_plus1=args.range_minus1_plus1)
-
-    elif args.data_folder_dir == '/workspace/sunggu/4.Dose_img2img/datasets/[sinogram]Brain_3mm_DCM':        
+    if args.data_folder_dir == '/workspace/sunggu/4.Dose_img2img/datasets/[sinogram]Brain_3mm_DCM':        
         if args.windowing:        
             dataset, collate_fn = TEST_Sinogram_Dataset_DCM_Windowing()
         else :
@@ -36,8 +29,6 @@ def build_dataset_test(args):
     elif args.data_folder_dir == 'TEST_Sinogram_Dataset_DCM_Clinical':        
         dataset, collate_fn = TEST_Sinogram_Dataset_DCM_Clinical()
 
-    # elif args.data_set == 'TEST_Sinogram_Dataset_DCM_SACNN': 
-        # dataset, collate_fn = TEST_Sinogram_Dataset_DCM_SACNN()
     else: 
         raise Exception('Error...! args.data_set')
 
