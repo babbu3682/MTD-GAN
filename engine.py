@@ -452,202 +452,7 @@ def test_CNN_Based_Ours_Progress(model, data_loader, device, save_dir):
 
 
 # GAN Based  ################################################
-# 1. FSGAN
-def train_FSGAN_Previous(model, data_loader, optimizer_G, optimizer_Low_D, optimizer_High_D, device, epoch, patch_training):
-    model.Generator.train(True)
-    model.Low_discriminator.train(True)
-    model.High_discriminator.train(True)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 10  
-
-    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
-        
-        if patch_training: 
-            input_n_20  = torch.cat([ batch_data[i]['n_20']  for i in range(8) ]).to(device).float()  # 8 is patch_nums
-            input_n_100 = torch.cat([ batch_data[i]['n_100'] for i in range(8) ]).to(device).float()  # (8*batch, C(=1), 64, 64) or (8*batch, C(=1), D(=3), H(=64), W(=64))
-
-        else :
-            input_n_20   = batch_data['n_20'].to(device).float()
-            input_n_100  = batch_data['n_100'].to(device).float()
-
-        # Inference Setting
-        low_dose                      = input_n_20
-        full_dose                     = input_n_100
-        # mu, logvar, gen_full_dose     = model.Generator(low_dose)
-        gen_full_dose     = model.Generator(low_dose)
-
-        # Low Discriminator
-        optimizer_Low_D.zero_grad()
-        model.Low_discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            Low_D_loss = model.train_Low_Discriminator(full_dose, low_dose, gen_full_dose, prefix='Low_Freq', n_iter=epoch)
-            Low_D_loss.backward()
-            optimizer_Low_D.step()
-        
-        # High Discriminator
-        optimizer_High_D.zero_grad()
-        model.High_discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            High_D_loss = model.train_High_Discriminator(full_dose, low_dose, gen_full_dose, prefix='High_Freq', n_iter=epoch)
-            High_D_loss.backward()
-            optimizer_High_D.step()        
-
-        # Generator
-        optimizer_G.zero_grad()
-        model.Generator.zero_grad()     # Same as optimizer zero grad()
-        
-            # Low
-        low_gen_enc, low_gen_dec   = model.Low_discriminator(gen_full_dose)
-        low_gen_loss               = model.gan_metric(low_gen_enc, torch.ones_like(low_gen_enc)) + model.gan_metric(low_gen_dec, torch.ones_like(low_gen_dec))
-            # High
-        high_gen_enc, high_gen_dec = model.High_discriminator(gen_full_dose)
-        high_gen_loss              = model.gan_metric(high_gen_enc, torch.ones_like(high_gen_enc)) + model.gan_metric(high_gen_dec, torch.ones_like(high_gen_dec))
-
-        # adv_loss  = 0.1*low_gen_loss + 0.1*high_gen_loss 
-        # pix_loss  = 1.0*F.l1_loss(gen_full_dose, full_dose)         
-        # enc_loss  = 0.05*model.KLDLoss(mu, logvar)
-        # G_loss = adv_loss + pix_loss + enc_loss
-
-        adv_loss  = 0.1*low_gen_loss + 0.1*high_gen_loss 
-        pix_loss  = 1000.0*model.pixel_metric(gen_full_dose, full_dose)         
-        G_loss = adv_loss + pix_loss
-                 
-        G_loss.backward()        
-        optimizer_G.step()
-
-
-        G_dict = {}
-        G_dict.update({
-            'G_loss/low_loss': low_gen_loss,
-            'G_loss/high_loss': high_gen_loss,
-            'G_loss/pix_loss': pix_loss,
-            # 'G_loss/enc_loss': enc_loss,
-
-            'D_loss/low_loss': Low_D_loss.item(),    
-            'D_loss/high_loss': High_D_loss.item(),
-        })
-
-        metric_logger.update(**G_dict)
-        metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
-        
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
-@torch.no_grad()
-def valid_FSGAN_Previous(model, criterion, data_loader, device, epoch, save_dir):
-    model.Generator.eval()
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
-
-    for batch_data in metric_logger.log_every(data_loader, print_freq, header):
-        input_n_20   = batch_data['n_20'].to(device).float()
-        input_n_100  = batch_data['n_100'].to(device).float()
-    
-
-        if hasattr(model, 'module'):
-            if model.module._get_name() == "FSGAN":
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module.Generator.inference, overlap=0.5, mode='constant')
-            else:
-                pred_n_100 = model.Generator(input_n_20)     
-
-        else :
-            if model._get_name() == "FSGAN":
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')     
-            else:
-                pred_n_100 = model.Generator(input_n_20)     
-
-        L1_loss = criterion(pred_n_100, input_n_100)
-        loss_value = L1_loss.item()
-        metric_logger.update(L1_loss=loss_value)
-
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    # Denormalize
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
-
-    # PNG Save
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
-@torch.no_grad()
-def test_FSGAN_Previous(model, data_loader, device, save_dir):
-    # switch to evaluation mode
-    model.Generator.eval()
-    
-    # compute PSNR, SSIM, RMSE
-    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
-    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
-    gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
-
-    iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
-    for batch_data in iterator:
-        
-        input_n_20   = batch_data['n_20'].to(device).float()
-        input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # Forward Generator
-        # pred_n_100 = model(input_n_20)
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
-
-        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
-        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
-        
-        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
-        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
-        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
-        
-        # DCM Save
-        save_dicom(batch_data['path_n_20'][0],  input_n_20,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
-        save_dicom(batch_data['path_n_100'][0], input_n_100, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
-        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
-        
-        # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
-        ori_psnr_avg  += original_result[0]
-        ori_ssim_avg  += original_result[1]
-        ori_rmse_avg  += original_result[2]
-        pred_psnr_avg += pred_result[0]
-        pred_ssim_avg += pred_result[1]
-        pred_rmse_avg += pred_result[2]
-        gt_psnr_avg   += gt_result[0]
-        gt_ssim_avg   += gt_result[1]
-        gt_rmse_avg   += gt_result[2]
-
-
-        # PNG Save clip for windowing visualize
-        input_n_20    = input_n_20.clip(min=0, max=80)
-        input_n_100   = input_n_100.clip(min=0, max=80)
-        pred_n_100    = pred_n_100.clip(min=0, max=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
-
-    print('\n')
-    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
-    print('\n')
-    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
-    print('\n')
-    print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
-
-
-# 2. FDGAN
+# 1. FDGAN
 def train_FDGAN_Ours(model, data_loader, optimizer_G, optimizer_Image_D, optimizer_Fourier_D, device, epoch, patch_training, print_freq, batch_size):
     model.Generator.train(True)
     model.Image_Discriminator.train(True)
@@ -815,16 +620,13 @@ def test_FDGAN_Ours(model, criterion, data_loader, device, png_save_dir):
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
-# 3. FDGAN_PatchGAN
-def train_FDGAN_PatchGAN_Ours(model, data_loader, optimizer_G, optimizer_Image_D, optimizer_Fourier_D, device, epoch, patch_training):
+# 2. MTD_GAN
+def train_MTD_GAN_Ours(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training, print_freq, batch_size):
     model.Generator.train(True)
-    model.Image_discriminator.train(True)
-    model.Fourier_discriminator.train(True)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    model.Discriminator.train(True)
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 1  
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         
@@ -836,181 +638,147 @@ def train_FDGAN_PatchGAN_Ours(model, data_loader, optimizer_G, optimizer_Image_D
             input_n_20   = batch_data['n_20'].to(device).float()
             input_n_100  = batch_data['n_100'].to(device).float()
 
-        # Inference Setting
-        low_dose       = input_n_20
-        full_dose      = input_n_100
-        gen_full_dose  = model.Generator(low_dose)
-
-        # Img Discriminator
-        optimizer_Image_D.zero_grad()
-        model.Image_discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            Img_D_loss = model.train_Image_Discriminator(full_dose, low_dose, gen_full_dose, prefix='Image_D', n_iter=epoch)
-            Img_D_loss.backward()
-            optimizer_Image_D.step()
-        
-        # Fourier Discriminator
-        optimizer_Fourier_D.zero_grad()
-        model.Fourier_discriminator.zero_grad()  # Same as optimizer zero grad()
-        for _ in range(1):
-            Fourier_D_loss = model.train_Fourier_Discriminator(full_dose, low_dose, gen_full_dose, prefix='Fourier_D', n_iter=epoch)
-            Fourier_D_loss.backward()
-            optimizer_Fourier_D.step()        
+        # Discriminator
+        optimizer_D.zero_grad()
+        model.Discriminator.zero_grad() 
+        d_loss, d_loss_details = model.d_loss(input_n_20, input_n_100)
+        d_loss.backward()
+        optimizer_D.step()
+        metric_logger.update(d_loss=d_loss)
+        metric_logger.update(**d_loss_details)
 
         # Generator
         optimizer_G.zero_grad()
-        model.Generator.zero_grad()     # Same as optimizer zero grad()
-        
-            # Low
-        image_gen          = model.Image_discriminator(gen_full_dose)
-        # image_gen_loss     = model.gan_metric(image_gen[0], torch.ones_like(image_gen[0]))
-        image_gen_loss     = model.gan_metric(image_gen, torch.ones_like(image_gen))
-        
-            # High
-        fourier_gen        = model.Fourier_discriminator(gen_full_dose)
-        fourier_gen_loss   = model.gan_metric(fourier_gen, torch.ones_like(fourier_gen)) 
-
-
-        adv_loss   = 0.1*image_gen_loss + 0.1*fourier_gen_loss 
-        pix_loss1  = 1.0*model.pixel_metric1(gen_full_dose, full_dose) 
-        pix_loss2  = 0.5*model.pixel_metric2(gen_full_dose, full_dose)
-        pix_loss3  = 0.5*model.pixel_metric3(gen_full_dose, full_dose)        
-
-        G_loss    = adv_loss + pix_loss1 + pix_loss2 + pix_loss3
-                 
-        G_loss.backward()        
+        model.Generator.zero_grad()
+        g_loss, g_loss_details = model.g_loss(input_n_20, input_n_100)
+        g_loss.backward()        
         optimizer_G.step()
+        metric_logger.update(g_loss=g_loss)
+        metric_logger.update(**g_loss_details)
 
-
-        G_dict = {}
-        G_dict.update({
-            'G_loss/image_gen_loss': image_gen_loss,
-            'G_loss/fourier_gen_loss': fourier_gen_loss,
-            'G_loss/pix_loss1': pix_loss1,
-            'G_loss/pix_loss2': pix_loss2,
-            'G_loss/pix_loss3': pix_loss3,
-
-            'D_loss/Image_D_loss': Img_D_loss.item(),    
-            'D_loss/Fourier_D_loss': Fourier_D_loss.item(),
-        })
-
-        metric_logger.update(**G_dict)
         metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
         
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def valid_FDGAN_PatchGAN_Ours(model, criterion, data_loader, device, epoch, save_dir):
-    # model.module.Generator.eval() if hasattr(model, 'module') else model.Generator.eval()
+def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
     model.Generator.eval()
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True)  
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
 
-
-        if hasattr(model, 'module'):
-            # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module.Generator, overlap=0.5, mode='constant')
-            pred_n_100 = model.Generator(input_n_20)     
-
-        else :
-            # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')     
-            pred_n_100 = model.Generator(input_n_20)     
-
+        pred_n_100 = model.Generator(input_n_20)     
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
+            
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()
         metric_logger.update(L1_loss=loss_value)
 
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
 
-    # Denormalize
-    input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-    input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-    pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
     # PNG Save
-    print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')
-    
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-    plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def test_FDGAN_PatchGAN_Ours(model, data_loader, device, save_dir):
-    # switch to evaluation mode
-    # model.module.Generator.eval() if hasattr(model, 'module') else model.Generator.eval()
+def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
     model.Generator.eval()
-    
-    # compute PSNR, SSIM, RMSE
-    ori_psnr_avg,  ori_ssim_avg,  ori_rmse_avg  = 0, 0, 0
-    pred_psnr_avg, pred_ssim_avg, pred_rmse_avg = 0, 0, 0
-    gt_psnr_avg,   gt_ssim_avg,   gt_rmse_avg   = 0, 0, 0
+    metric_logger = utils.MetricLogger(delimiter="  ", n=1)
 
-    iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
-    for batch_data in iterator:
+    for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
-        
-        # Forward Generator
-        # pred_n_100 = model(input_n_20)
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator.inference, overlap=0.5, mode='constant')
 
-        os.makedirs(save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
-        os.makedirs(save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
-        
+        # pred_n_100 = model.Generator(input_n_20)     
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant').clip(min=0, max=1)
+
+
+        L1_loss = criterion(pred_n_100, input_n_100)
+        loss_value = L1_loss.item()
+        metric_logger.update(L1_loss=loss_value)            
+
+        # SAVE
+        os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+
+        # Denormalize (No windowing input version)
         input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
         input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
         pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
-        
-        # DCM Save
-        save_dicom(batch_data['path_n_20'][0],  input_n_20,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
-        save_dicom(batch_data['path_n_100'][0], input_n_100, save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
-        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
-        
+                
         # Metric
         original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
-        ori_psnr_avg  += original_result[0]
-        ori_ssim_avg  += original_result[1]
-        ori_rmse_avg  += original_result[2]
-        pred_psnr_avg += pred_result[0]
-        pred_ssim_avg += pred_result[1]
-        pred_rmse_avg += pred_result[2]
-        gt_psnr_avg   += gt_result[0]
-        gt_ssim_avg   += gt_result[1]
-        gt_rmse_avg   += gt_result[2]
+        metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
+        metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
+        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
+        # DCM Save
+        save_dicom(batch_data['path_n_20'][0],  input_n_20,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
+        save_dicom(batch_data['path_n_100'][0], input_n_100, png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
+        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
 
-        # PNG Save clip for windowing visualize
-        input_n_20    = input_n_20.clip(min=0, max=80)
-        input_n_100   = input_n_100.clip(min=0, max=80)
-        pred_n_100    = pred_n_100.clip(min=0, max=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray", vmin=0, vmax=80)
+        # PNG Save clip for windowing visualize, brain:[0, 80] HU
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
+        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.clip(min=0, max=80).squeeze(), cmap="gray", vmin=0, vmax=80)
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
-    print('\n')
-    print('Original === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(ori_psnr_avg/len(data_loader), ori_ssim_avg/len(data_loader), ori_rmse_avg/len(data_loader)))
-    print('\n')
-    print('Predictions === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(pred_psnr_avg/len(data_loader), pred_ssim_avg/len(data_loader), pred_rmse_avg/len(data_loader)))        
-    print('\n')
-    print('GT === \nPSNR avg: {:.4f} \nSSIM avg: {:.4f} \nRMSE avg: {:.4f}'.format(gt_psnr_avg/len(data_loader), gt_ssim_avg/len(data_loader), gt_rmse_avg/len(data_loader)))        
+        # # Denormalize (windowing input version)
+        # input_n_20    = fn_tonumpy(input_n_20)
+        # input_n_100   = fn_tonumpy(input_n_100)
+        # pred_n_100    = fn_tonumpy(pred_n_100)  
 
+        # # Metric
+        # original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
+        # metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
+        # metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
+        # metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
+        # # PNG Save clip for windowing visualize, brain:[0, 80] HU
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
+        # # INFERENCE
+        # os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[-1], mode=0o777, exist_ok=True) # dicom save folder
+        # os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[-1], mode=0o777, exist_ok=True) # png   save folder
 
+        # # Denormalize (windowing input version)
+        # input_n_20    = fn_tonumpy(input_n_20)
+        # input_n_100   = fn_tonumpy(input_n_100)
+        # pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # # Metric
+        # original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
+        # metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
+        # metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
+        # metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
+
+        # # PNG Save clip for windowing visualize, brain:[0, 80] HU
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 
 
@@ -1795,7 +1563,7 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
     model.Generator.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)    
     
-
+    cnt = 0
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -1809,8 +1577,8 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
         metric_logger.update(L1_loss=loss_value)            
 
         # SAVE
-        os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
-        os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+        # os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        # os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
         
         # # Denormalize (No windowing input version)
         # input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
@@ -1845,9 +1613,15 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
         metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
         # PNG Save clip for windowing visualize, brain:[0, 80] HU
-        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
-        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
-        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
+        np.save('/workspace/sunggu/denoising/input_n_20_'+str(cnt), input_n_20)
+        np.save('/workspace/sunggu/denoising/gt_n_100_'+str(cnt), input_n_100)
+        np.save('/workspace/sunggu/denoising/pred_n_100_'+str(cnt), pred_n_100)
+        cnt += 1
+
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 

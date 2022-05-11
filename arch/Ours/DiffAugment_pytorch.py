@@ -13,7 +13,8 @@ import random
 
 
 
-def DiffAugment(x, policy='translation,cutout,equalize,rotate', channels_first=True):
+# def DiffAugment(x, policy='translation,cutout,equalize,rotate', channels_first=True):
+def DiffAugment(x, policy='translation,cutout', channels_first=True):
     if policy:
         if not channels_first:
             x = x.permute(0, 3, 1, 2)

@@ -50,6 +50,7 @@ class UpBlock(nn.Module):
         sc = self.shortcut(x)
         return p + sc
 
+
 class UNet_DUGAN(nn.Module):
     def __init__(self, repeat_num, use_tanh=False, use_sigmoid=False, skip_connection=True, use_discriminator=True, conv_dim=64, in_channels=1):
         super().__init__()
@@ -123,8 +124,101 @@ class UNet_DUGAN(nn.Module):
                     nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in', nonlinearity='leaky_relu')
 
 
+
+
+
+# plus REC
+class REC_UpBlock(nn.Module):
+    def __init__(self, input_channels, out_channels):
+        super().__init__()
+        self.shortcut = nn.Conv2d(input_channels, out_channels, kernel_size=1)
+        self.conv     = double_conv(input_channels, out_channels)
+        self.up       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+
+    def forward(self, x):
+        x = self.up(x)
+        p = self.conv(x)
+        sc = self.shortcut(x)
+        return p + sc
+
+class MTL_UNet_DUGAN(nn.Module):
+    def __init__(self, repeat_num, conv_dim=64, in_channels=1):
+        super().__init__()
+
+        filters = [in_channels] + [min(conv_dim * (2 ** i), 512) for i in range(repeat_num + 1)]
+        filters[-1] = filters[-2]
+
+        channel_in_out = list(zip(filters[:-1], filters[1:]))
+
+        # Encoder
+        self.down_blocks = nn.ModuleList()
+        for i, (in_channel, out_channel) in enumerate(channel_in_out):
+            self.down_blocks.append(DownBlock(in_channel, out_channel, downsample=(i != (len(channel_in_out) - 1))))
+
+        last_channel = filters[-1]
+        self.conv = double_conv(last_channel, last_channel)
+
+        # CLS Decoder
+        self.to_logit = nn.Sequential(nn.LeakyReLU(negative_slope=0.2, inplace=True), nn.AdaptiveAvgPool2d(output_size=1), nn.Flatten(), nn.Linear(last_channel, 1))
+
+        # SEG Decoder
+        self.seg_up_blocks = nn.ModuleList(list(map(lambda c: UpBlock(c[1] * 2, c[0]), channel_in_out[:-1][::-1])))
+        
+        # REC Decoder
+        self.rec_up_blocks = nn.ModuleList(list(map(lambda c: REC_UpBlock(c[1], c[0]), channel_in_out[:-1][::-1])))
+
+        
+        self.seg_conv_out = nn.Conv2d(in_channels, 1, 1)
+        self.rec_conv_out = nn.Conv2d(in_channels, 1, 1)
+        self.__init_weights()
+
+
+    def forward(self, input):
+        x = input
+        residuals = []
+        # encoder
+        for i in range(len(self.down_blocks)):
+            x, unet_res = self.down_blocks[i](x)
+            residuals.append(unet_res)
+
+        bottom_x = self.conv(x) + x
+        
+        # CLS
+        enc_out = self.to_logit(bottom_x)
+        
+        # SEG
+        x = bottom_x
+        for (seg_up_block, res) in zip(self.seg_up_blocks, residuals[:-1][::-1]):
+            x = seg_up_block(x, res)
+        dec_out = self.seg_conv_out(x)
+
+        # REC
+        x = bottom_x
+        for rec_up_block in self.rec_up_blocks:
+            x = rec_up_block(x)
+        rec_out = self.rec_conv_out(x)   
+            
+        return enc_out.squeeze(), dec_out, rec_out
+
+
+    def __init_weights(self):
+        for m in self.modules():
+            if type(m) in {nn.Conv2d, nn.Linear}:
+                m.weight.data.normal_(0, 0.01)
+                if hasattr(m.bias, 'data'):
+                    m.bias.data.fill_(0)
+
+
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
-    D = UNet(repeat_num=3, use_discriminator=False)
+    D = UNet_DUGAN(repeat_num=3, use_discriminator=False)
     # inputs = torch.randn(4, 1, 64, 64)
     # enc_out, dec_out = D(inputs)
     # print(enc_out.shape, dec_out.shape)

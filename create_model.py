@@ -15,7 +15,7 @@ from arch.Markovian_Patch_GAN.networks import Markovian_Patch_GAN
 from arch.DUGAN.networks import DUGAN
 
     # Ours Works
-from arch.Ours.network import ResFFT_LFSPADE, ResFFT_Freq_SPADE_Att, FSGAN, FDGAN_PatchGAN, FDGAN, FDGAN_domain
+from arch.Ours.network import FDGAN, FDGAN_domain, MTD_GAN, Ablation_A, Ablation_B, Ablation_C, Ablation_D, Ablation_E
 
 
 
@@ -50,17 +50,33 @@ def create_model(name):
         model = ResFFT_Freq_SPADE_Att()
 
         ### GAN Base
-    elif name == "FSGAN":
-        model = FSGAN(generator_type="Restormer_Decoder")    
-
-    elif name == "FDGAN_PatchGAN":
-        model = FDGAN_PatchGAN()    
-
     elif name == "FDGAN":
         model = FDGAN()
 
     elif name == "FDGAN_domain":
         model = FDGAN_domain()
+
+    elif name == "MTD_GAN":
+        model = MTD_GAN()  
+
+    elif name == "Ablation_A":
+        model = Ablation_A()        
+
+    elif name == "Ablation_B":
+        model = Ablation_B()       
+
+    elif name == "Ablation_C":
+        model = Ablation_C()       
+
+    elif name == "Ablation_D":
+        model = Ablation_D()       
+
+    elif name == "Ablation_E":
+        model = Ablation_E()       
+                        
+    elif name == "MTL_D_GAN":
+        model = MTL_D_GAN()        
+
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('Number of Learnable Params:', n_parameters)   

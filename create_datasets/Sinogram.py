@@ -520,8 +520,8 @@ def TEST_Sinogram_Dataset_DCM_Clinical():
     transforms = Compose(
         [
             Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-            Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-            # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+            # Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+            ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
             AddChanneld(keys=["n_20", "n_100"]),         
 
             # Normalize
