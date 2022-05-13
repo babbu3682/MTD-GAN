@@ -102,7 +102,7 @@ def main(args):
     if args.model_name == 'RED_CNN' or args.model_name == 'ED_CNN': 
         test_stats = test_CNN_Based_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
         print("Averaged test stats: ", test_stats)
-
+    # Transformer based
     elif args.model_name == 'CTformer' or args.model_name == 'Restormer': 
         test_stats = test_Transformer_Based_Previous(model, criterion, data_loader_test, device, args.png_save_dir)
         print("Averaged test stats: ", test_stats)
@@ -133,14 +133,14 @@ def main(args):
         print("Averaged test stats: ", test_stats)
 
         # Ours
-    elif args.model_name == 'FDGAN_PatchGAN': 
-        test_stats = test_FDGAN_PatchGAN_Ours(model, criterion, data_loader_test, device, args.png_save_dir)    
-        print("Averaged test stats: ", test_stats)
-
     elif args.model_name == 'FDGAN' or args.model_name == 'FDGAN_domain': 
         test_stats = test_FDGAN_Ours(model, criterion, data_loader_test, device, args.png_save_dir)    
         print("Averaged test stats: ", test_stats)
    
+    elif args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
+        test_stats = test_MTD_GAN_Ours(model, criterion, data_loader_test, device, args.png_save_dir)
+        print("Averaged test stats: ", test_stats)
+
     else :
         pass
         

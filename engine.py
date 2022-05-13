@@ -709,9 +709,8 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
 
-        # pred_n_100 = model.Generator(input_n_20)     
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant').clip(min=0, max=1)
-
+        pred_n_100 = model.Generator(input_n_20)     
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant').clip(min=0, max=1)
 
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()
@@ -721,42 +720,43 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
         os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
         os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
 
-        # Denormalize (No windowing input version)
-        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
-        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
-        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
+        # # Denormalize (No windowing input version)
+        # input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
+        # input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
+        # pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
                 
-        # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
-        metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
-        metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
-        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
-
-        # DCM Save
-        save_dicom(batch_data['path_n_20'][0],  input_n_20,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
-        save_dicom(batch_data['path_n_100'][0], input_n_100, png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
-        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
-
-        # PNG Save clip for windowing visualize, brain:[0, 80] HU
-        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
-        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.clip(min=0, max=80).squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
-
-        # # Denormalize (windowing input version)
-        # input_n_20    = fn_tonumpy(input_n_20)
-        # input_n_100   = fn_tonumpy(input_n_100)
-        # pred_n_100    = fn_tonumpy(pred_n_100)  
-
         # # Metric
-        # original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
+        # original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
         # metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         # metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
         # metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
+        # # DCM Save
+        # save_dicom(batch_data['path_n_20'][0],  input_n_20,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
+        # save_dicom(batch_data['path_n_100'][0], input_n_100, png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
+        # save_dicom(batch_data['path_n_20'][0],  pred_n_100,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
+
         # # PNG Save clip for windowing visualize, brain:[0, 80] HU
-        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
-        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
-        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
+        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.clip(min=0, max=80).squeeze(), cmap="gray", vmin=0, vmax=80)
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
+
+        # Denormalize (windowing input version)
+        input_n_20    = fn_tonumpy(input_n_20)
+        input_n_100   = fn_tonumpy(input_n_100)
+        pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # Metric
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
+        metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
+        metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
+        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
+
+        # PNG Save clip for windowing visualize, brain:[0, 80] HU
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
+        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
 
         # # INFERENCE
         # os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[-1], mode=0o777, exist_ok=True) # dicom save folder
