@@ -1108,6 +1108,9 @@ def minmax_normalize(x):
 def ls_gan_with_weight(inputs, targets, diffs):
     return torch.mean( minmax_normalize(torch.abs(diffs)) * (inputs - targets)**2 )
 
+def ls_gan_with_weight_upgrade(inputs, targets, diffs):
+    return torch.mean( torch.abs(diffs).bool() * (inputs - targets)**2 )
+
 class FFT_ConvBlock(nn.Module):
     def __init__(self, out_channels):
         super(FFT_ConvBlock, self).__init__()
@@ -1285,7 +1288,7 @@ class Multi_Task_Discriminator(nn.Module):
         self.relu62    = nn.LeakyReLU(0.2)
         self.down6     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
 
-        # Bot
+        # Bot --> 이미 input이 1x1이기에 kernel_size를 1로 하는게 더 좋을듯 하다....
         self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
         self.brelu    = nn.LeakyReLU(0.2)                
         self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
@@ -1463,7 +1466,7 @@ class Multi_Task_Discriminator(nn.Module):
         rec_out = self.r_drelu62(self.r_dconv62(x))       
 
         # Heads
-        x_enc = self.enc_out(x_bot) 
+        x_enc = self.enc_out(x_bot)   # enc에 FC 1 layer 더 있어야 편해질듯...?
         x_dec = self.dec_out(seg_out)
         x_rec = self.rec_out(rec_out)
 
@@ -1496,7 +1499,8 @@ class MTD_GAN(nn.Module):
         # LOSS
         # self.gan_metric    = nn.BCEWithLogitsLoss()
         self.gan_metric_cls  = ls_gan
-        self.gan_metric_seg  = ls_gan_with_weight
+        # self.gan_metric_seg  = ls_gan_with_weight
+        self.gan_metric_seg  = ls_gan_with_weight_upgrade
         
         self.pixel_loss     = CharbonnierLoss()
         self.edge_loss      = EdgeLoss()
@@ -1506,15 +1510,17 @@ class MTD_GAN(nn.Module):
         real_enc,  real_dec,  real_rec   = self.Discriminator(y)
         fake_enc,  fake_dec,  _          = self.Discriminator(fake)
         
-        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + 30.0*self.gan_metric_seg(real_dec, 1., x-y) + 30.0*self.gan_metric_seg(fake_dec, 0., x-y)
+        # disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + 30.0*self.gan_metric_seg(real_dec, 1., x-y) + 30.0*self.gan_metric_seg(fake_dec, 0., x-y)
+        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
         rec_loss     = F.l1_loss(real_rec, y)
+        
         # MSE
-        # consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1))
-        # consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
+        consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1))
+        consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
         
         # Cosine (Ref: https://github.com/pytorch/pytorch/issues/8316)
-        consist_loss_real = F.cosine_embedding_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1), torch.ones(real_enc.shape[0]).cuda()) 
-        consist_loss_fake = F.cosine_embedding_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1), torch.ones(fake_enc.shape[0]).cuda())
+        # consist_loss_real = F.cosine_embedding_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1), torch.ones(real_enc.shape[0]).cuda()) 
+        # consist_loss_fake = F.cosine_embedding_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1), torch.ones(fake_enc.shape[0]).cuda())
         
         consist_loss = consist_loss_real + consist_loss_fake
         
@@ -1538,10 +1544,8 @@ class MTD_GAN(nn.Module):
         gen_enc, gen_dec, _     = self.Discriminator(fake)
 
         
-        gen_loss     = self.gan_metric_cls(gen_enc, 1.) + 30.0*self.gan_metric_seg(gen_dec, 1., x-y)
-        
-
-        adv_loss     = gen_loss
+        # adv_loss     = self.gan_metric_cls(gen_enc, 1.) + 30.0*self.gan_metric_seg(gen_dec, 1., x-y)
+        adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
         pix_loss     = 50.0*self.pixel_loss(fake, y)
         edge_loss    = 50.0*self.edge_loss(fake, y)
 
@@ -2257,7 +2261,8 @@ class Ablation_D(nn.Module):
 
         # LOSS
         self.gan_metric_cls  = ls_gan
-        self.gan_metric_seg  = ls_gan_with_weight
+        # self.gan_metric_seg  = ls_gan_with_weight
+        self.gan_metric_seg  = ls_gan_with_weight_upgrade
         
         self.pixel_loss     = CharbonnierLoss()
         self.edge_loss      = EdgeLoss()
@@ -2266,8 +2271,8 @@ class Ablation_D(nn.Module):
         fake                             = self.Generator(x).detach()   
         real_enc,  real_dec,  real_rec   = self.Discriminator(y)
         fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-        
-        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + 30.0*self.gan_metric_seg(real_dec, 1., x-y) + 30.0*self.gan_metric_seg(fake_dec, 0., x-y)
+
+        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
         rec_loss     = F.l1_loss(real_rec, y)
         
         print("D / real_enc == ", real_enc.max())
@@ -2288,7 +2293,7 @@ class Ablation_D(nn.Module):
         gen_enc, gen_dec, _     = self.Discriminator(fake)
 
         
-        gen_loss     = self.gan_metric_cls(gen_enc, 1.) + 30.0*self.gan_metric_seg(gen_dec, 1., x-y)
+        gen_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
         
 
         adv_loss     = gen_loss
@@ -2318,7 +2323,8 @@ class Ablation_E(nn.Module):
 
         # LOSS
         self.gan_metric_cls  = ls_gan
-        self.gan_metric_seg  = ls_gan_with_weight
+        # self.gan_metric_seg  = ls_gan_with_weight
+        self.gan_metric_seg  = ls_gan_with_weight_upgrade
         
         self.pixel_loss     = CharbonnierLoss()
         self.edge_loss      = EdgeLoss()
@@ -2327,48 +2333,36 @@ class Ablation_E(nn.Module):
         fake                             = self.Generator(x).detach()   
         real_enc,  real_dec,  real_rec   = self.Discriminator(y)
         fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-        
-        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + 30.0*self.gan_metric_seg(real_dec, 1., x-y) + 30.0*self.gan_metric_seg(fake_dec, 0., x-y)
+    
+        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
         rec_loss     = F.l1_loss(real_rec, y) 
-        ## MSE
-        # consist_loss = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1)) + F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
-
-        # Cosine
-        consist_loss_real = F.cosine_embedding_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1), torch.ones(real_enc.shape[0]).cuda())
-        consist_loss_fake = F.cosine_embedding_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1), torch.ones(fake_enc.shape[0]).cuda())
+        
+        # MSE
+        consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1))
+        consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
+        
         consist_loss = consist_loss_real + consist_loss_fake      
 
         print("D / real_enc == ", real_enc.max())
         print("D / fake_enc == ", fake_enc.max())
 
         total_loss   = disc_loss + rec_loss + 0.5*consist_loss
-        # loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-        #                 'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-        #                 'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-        #                 'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-        #                 'D/REC_loss': F.l1_loss(real_rec, y),
-        #                 'D/real_consist_loss': F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1)),
-        #                 'D/fake_consist_loss': F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))}
         loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
                         'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
                         'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
                         'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
                         'D/REC_loss': F.l1_loss(real_rec, y),
                         'D/consist_loss_real': consist_loss_real,
-                        'D/consist_loss_fake': consist_loss_fake}                        
-        
+                        'D/consist_loss_fake': consist_loss_fake}     
+                         
         return total_loss, loss_details
 
 
     def g_loss(self, x, y):
         fake                    = self.Generator(x)
         gen_enc, gen_dec, _     = self.Discriminator(fake)
-
         
-        gen_loss     = self.gan_metric_cls(gen_enc, 1.) + 30.0*self.gan_metric_seg(gen_dec, 1., x-y)
-        
-
-        adv_loss     = gen_loss
+        adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
         pix_loss     = 50.0*self.pixel_loss(fake, y)
         edge_loss    = 50.0*self.edge_loss(fake, y)
 
@@ -2383,3 +2377,67 @@ class Ablation_E(nn.Module):
 
         return total_loss, loss_details
 
+
+# Ablation_F - MTL_D_GAN + Consistency loss
+class Ablation_F(nn.Module):
+    def __init__(self):
+        super(Ablation_F, self).__init__()
+        # Generator
+        self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
+
+        # Discriminator
+        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
+
+        # LOSS
+        self.gan_metric  = ls_gan
+        
+        self.pixel_loss     = CharbonnierLoss()
+        self.edge_loss      = EdgeLoss()
+
+    def d_loss(self, x, y):
+        fake                             = self.Generator(x).detach()   
+        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
+        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
+        
+        disc_loss    = self.gan_metric(real_enc, 1.) + self.gan_metric(fake_enc, 0.) + self.gan_metric(real_dec, 1.) + self.gan_metric(fake_dec, 0.)
+        rec_loss     = F.l1_loss(real_rec, y) 
+
+        ## MSE
+        consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1))
+        consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
+
+        consist_loss = consist_loss_real + consist_loss_fake      
+
+        print("D / real_enc == ", real_enc.max())
+        print("D / fake_enc == ", fake_enc.max())
+
+        total_loss   = disc_loss + rec_loss + 0.5*consist_loss
+        loss_details = {'D/real_enc': self.gan_metric(real_enc, 1.), 
+                        'D/fake_enc': self.gan_metric(fake_enc, 0.), 
+                        'D/real_dec': self.gan_metric(real_dec, 1.),
+                        'D/fake_dec': self.gan_metric(fake_dec, 0.),
+                        'D/REC_loss': F.l1_loss(real_rec, y),
+                        'D/consist_loss_real': consist_loss_real,
+                        'D/consist_loss_fake': consist_loss_fake}
+                  
+        return total_loss, loss_details
+
+
+    def g_loss(self, x, y):
+        fake                    = self.Generator(x)
+        gen_enc, gen_dec, _     = self.Discriminator(fake)
+
+        adv_loss     = self.gan_metric(gen_enc, 1.) + self.gan_metric(gen_dec, 1.)
+        pix_loss     = 50.0*self.pixel_loss(fake, y)
+        edge_loss    = 50.0*self.edge_loss(fake, y)
+
+        print("G / real_enc == ", gen_enc.max())
+
+        total_loss   = adv_loss + pix_loss + edge_loss
+        loss_details = {'G/gen_enc': self.gan_metric(gen_enc, 1.), 
+                        'G/gen_dec': self.gan_metric(gen_dec, 1.), 
+                        'G/pix_loss': pix_loss,
+                        'G/edge_loss': edge_loss}
+                        
+
+        return total_loss, loss_details
