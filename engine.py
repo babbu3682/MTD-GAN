@@ -621,7 +621,7 @@ def test_FDGAN_Ours(model, criterion, data_loader, device, png_save_dir):
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 # 2. MTD_GAN
-def train_MTD_GAN_Ours(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training, print_freq, batch_size):
+def train_MTD_GAN_Ours(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training, print_freq, batch_size, pcgrad):
     model.Generator.train(True)
     model.Discriminator.train(True)
     metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
@@ -638,25 +638,45 @@ def train_MTD_GAN_Ours(model, data_loader, optimizer_G, optimizer_D, device, epo
             input_n_20   = batch_data['n_20'].to(device).float()
             input_n_100  = batch_data['n_100'].to(device).float()
 
-        # Discriminator
-        optimizer_D.zero_grad()
-        model.Discriminator.zero_grad() 
-        d_loss, d_loss_details = model.d_loss(input_n_20, input_n_100)
-        d_loss.backward()
-        optimizer_D.step()
-        metric_logger.update(d_loss=d_loss)
-        metric_logger.update(**d_loss_details)
+        if pcgrad:
+            # Discriminator
+            optimizer_D.zero_grad()
+            model.Discriminator.zero_grad() 
+            d_loss, d_loss_details = model.d_loss(input_n_20, input_n_100)
+            optimizer_D.pc_backward(d_loss)  # d_loss is list      
+            optimizer_D.step()
+            metric_logger.update(d_loss=sum(d_loss))
+            metric_logger.update(**d_loss_details)
 
-        # Generator
-        optimizer_G.zero_grad()
-        model.Generator.zero_grad()
-        g_loss, g_loss_details = model.g_loss(input_n_20, input_n_100)
-        g_loss.backward()        
-        optimizer_G.step()
-        metric_logger.update(g_loss=g_loss)
-        metric_logger.update(**g_loss_details)
+            # Generator
+            optimizer_G.zero_grad()
+            model.Generator.zero_grad()
+            g_loss, g_loss_details = model.g_loss(input_n_20, input_n_100)
+            optimizer_G.pc_backward(g_loss)  # g_loss is list    
+            optimizer_G.step()
+            metric_logger.update(g_loss=sum(g_loss))
+            metric_logger.update(**g_loss_details)
 
-        metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
+            metric_logger.update(lr=optimizer_G.optimizer.param_groups[0]["lr"])
+        else :
+            # Discriminator
+            optimizer_D.zero_grad()
+            model.Discriminator.zero_grad() 
+            d_loss, d_loss_details = model.d_loss(input_n_20, input_n_100)
+            d_loss.backward()              # d_loss is tensor
+            optimizer_D.step()
+            metric_logger.update(d_loss=d_loss)        
+            metric_logger.update(**d_loss_details)
+
+            # Generator
+            optimizer_G.zero_grad()
+            model.Generator.zero_grad()
+            g_loss, g_loss_details = model.g_loss(input_n_20, input_n_100)
+            g_loss.backward()              # g_loss is tensor
+            optimizer_G.step()
+            metric_logger.update(g_loss=g_loss)
+            metric_logger.update(**g_loss_details)
+            metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
         
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 

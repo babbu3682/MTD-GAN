@@ -15,11 +15,11 @@ from arch.Markovian_Patch_GAN.networks import Markovian_Patch_GAN
 from arch.DUGAN.networks import DUGAN
 
     # Ours Works
-from arch.Ours.network import FDGAN, FDGAN_domain, MTD_GAN, Ablation_A, Ablation_B, Ablation_C, Ablation_D, Ablation_E, Ablation_F
+from arch.Ours.network import FDGAN, FDGAN_domain, MTD_GAN, MTD_GAN_V2, MTD_GAN_V3, Ablation_A, Ablation_B, Ablation_C, Ablation_D, Ablation_E, Ablation_F, Ablation_G
 
 
 
-def create_model(name):    
+def create_model(name):
     # Previous
         ### CNN based
     if name == "RED_CNN":
@@ -59,6 +59,12 @@ def create_model(name):
     elif name == "MTD_GAN":
         model = MTD_GAN()  
 
+    elif name == "MTD_GAN_V2":
+        model = MTD_GAN_V2()
+    
+    elif name == "MTD_GAN_V3":
+        model = MTD_GAN_V3()    
+
     elif name == "Ablation_A":
         model = Ablation_A()        
 
@@ -76,6 +82,9 @@ def create_model(name):
 
     elif name == "Ablation_F":
         model = Ablation_F()               
+
+    elif name == "Ablation_G":
+        model = Ablation_G()               
 
     elif name == "MTL_D_GAN":
         model = MTL_D_GAN()        

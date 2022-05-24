@@ -164,6 +164,8 @@ def Sinogram_Dataset_DCM_Windowing(mode, patch_training):
                     AddChanneld(keys=["n_20", "n_100"]),    
                     
                     # Crop  
+                    CropForegroundd(keys=["n_20", "n_100"], source_key="n_100", select_fn=lambda x: x > 0),
+                    SpatialPadd(keys=["n_20", "n_100"], spatial_size=(64, 64)),
                     RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
                         # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
 
