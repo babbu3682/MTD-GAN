@@ -17,8 +17,8 @@ import torch.nn as nn
 from torch.nn.modules.loss import _Loss
 from torchvision.models import vgg16, vgg19
 
-from piq.utils import _validate_input, _adjust_dimensions
-from piq.functional import similarity_map, L2Pool2d
+from module.piq.utils import _validate_input, _adjust_dimensions
+from module.piq.functional import similarity_map, L2Pool2d
 
 
 # Map VGG names to corresponding number in torchvision layer

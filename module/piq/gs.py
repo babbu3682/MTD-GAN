@@ -12,7 +12,7 @@ import gudhi
 import numpy as np
 from scipy.spatial.distance import cdist
 
-from piq.base import BaseFeatureMetric
+from module.piq.base import BaseFeatureMetric
 
 
 def relative(intervals: np.ndarray, alpha_max: float, i_max: int = 100) -> np.ndarray:

@@ -8,7 +8,7 @@ import numpy as np
 
 from scipy.sparse import lil_matrix, diags, eye
 
-from piq.base import BaseFeatureMetric
+from module.piq.base import BaseFeatureMetric
 
 EPSILON = 1e-6
 NORMALIZATION = 1e6

@@ -9,8 +9,8 @@ from typing import Union, Tuple
 import torch
 from torch.nn.modules.loss import _Loss
 from torch.nn.functional import avg_pool2d, interpolate, pad
-from piq.functional import ifftshift, gradient_map, scharr_filter, rgb2lmn, rgb2lab, similarity_map, get_meshgrid
-from piq.utils import _validate_input, _adjust_dimensions
+from module.piq.functional import ifftshift, gradient_map, scharr_filter, rgb2lmn, rgb2lab, similarity_map, get_meshgrid
+from module.piq.utils import _validate_input, _adjust_dimensions
 import functools
 import warnings
 

@@ -11,8 +11,8 @@ import torch
 from torch.nn.modules.loss import _Loss
 from torch.nn.functional import pad, avg_pool2d
 from typing import Union
-from piq.functional import rgb2lhm, gradient_map, similarity_map, prewitt_filter, pow_for_complex
-from piq.utils import _validate_input, _adjust_dimensions
+from module.piq.functional import rgb2lhm, gradient_map, similarity_map, prewitt_filter, pow_for_complex
+from module.piq.utils import _validate_input, _adjust_dimensions
 
 
 def mdsi(prediction: torch.Tensor, target: torch.Tensor, data_range: Union[int, float] = 1., reduction: str = 'mean',

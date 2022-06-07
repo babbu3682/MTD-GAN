@@ -15,8 +15,8 @@ import torch
 import torch.nn.functional as F
 from torch.nn.modules.loss import _Loss
 
-from piq.utils import _adjust_dimensions, _validate_input
-from piq.functional import similarity_map, rgb2yiq, haar_filter
+from module.piq.utils import _adjust_dimensions, _validate_input
+from module.piq.functional import similarity_map, rgb2yiq, haar_filter
 
 
 def haarpsi(x: torch.Tensor, y: torch.Tensor, reduction: str = 'mean',

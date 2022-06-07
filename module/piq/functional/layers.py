@@ -2,7 +2,7 @@ r"""Custom layers used in metrics computations"""
 import torch
 from typing import Optional
 
-from piq.functional import hann_filter
+from module.piq.functional import hann_filter
 
 
 class L2Pool2d(torch.nn.Module):

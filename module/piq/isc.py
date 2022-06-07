@@ -14,7 +14,7 @@ Credits:
 import torch
 import torch.nn.functional as F
 
-from piq.base import BaseFeatureMetric
+from module.piq.base import BaseFeatureMetric
 
 
 def inception_score(features: torch.Tensor, num_splits: int = 10):

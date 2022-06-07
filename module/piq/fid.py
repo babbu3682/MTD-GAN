@@ -11,7 +11,7 @@ Credits:
 from typing import Tuple
 import torch
 
-from piq.base import BaseFeatureMetric
+from module.piq.base import BaseFeatureMetric
 
 
 def _approximation_error(matrix: torch.Tensor, s_matrix: torch.Tensor) -> torch.Tensor:

@@ -13,8 +13,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.modules.loss import _Loss
 
-from piq.utils import _validate_input, _adjust_dimensions
-from piq.functional import crop_patches
+from module.piq.utils import _validate_input, _adjust_dimensions
+from module.piq.functional import crop_patches
 
 
 class PieAPPModel(nn.Module):

@@ -13,8 +13,8 @@ import torch
 from torch.nn.modules.loss import _Loss
 from torch.utils.model_zoo import load_url
 import torch.nn.functional as F
-from piq.utils import _adjust_dimensions, _validate_input
-from piq.functional import rgb2yiq, gaussian_filter
+from module.piq.utils import _adjust_dimensions, _validate_input
+from module.piq.functional import rgb2yiq, gaussian_filter
 
 
 def brisque(x: torch.Tensor,

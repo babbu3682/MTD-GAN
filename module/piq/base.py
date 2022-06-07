@@ -1,7 +1,7 @@
 import torch
 
-from piq.feature_extractors import InceptionV3
-from piq.utils import _validate_features
+from module.piq.feature_extractors import InceptionV3
+from module.piq.utils import _validate_features
 
 
 class BaseFeatureMetric(torch.nn.Module):

@@ -11,8 +11,8 @@ from typing import Union, Tuple
 import torch
 from torch.nn.modules.loss import _Loss
 
-from piq.utils import _adjust_dimensions, _validate_input
-from piq.functional import ifftshift, get_meshgrid, similarity_map, gradient_map, scharr_filter, rgb2yiq
+from module.piq.utils import _adjust_dimensions, _validate_input
+from module.piq.functional import ifftshift, get_meshgrid, similarity_map, gradient_map, scharr_filter, rgb2yiq
 
 
 def fsim(x: torch.Tensor, y: torch.Tensor, reduction: str = 'mean',

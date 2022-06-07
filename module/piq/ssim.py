@@ -12,8 +12,8 @@ import torch
 import torch.nn.functional as F
 from torch.nn.modules.loss import _Loss
 
-from piq.utils import _adjust_dimensions, _validate_input
-from piq.functional import gaussian_filter
+from module.piq.utils import _adjust_dimensions, _validate_input
+from module.piq.functional import gaussian_filter
 
 
 def ssim(x: torch.Tensor, y: torch.Tensor, kernel_size: int = 11, kernel_sigma: float = 1.5,

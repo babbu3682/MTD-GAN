@@ -14,8 +14,8 @@ from typing import Optional, Union, Tuple, List, cast
 import torch.nn.functional as F
 from torch.nn.modules.loss import _Loss
 
-from piq.utils import _adjust_dimensions, _validate_input
-from piq.functional import similarity_map, gradient_map, prewitt_filter, rgb2yiq
+from module.piq.utils import _adjust_dimensions, _validate_input
+from module.piq.functional import similarity_map, gradient_map, prewitt_filter, rgb2yiq
 
 
 def gmsd(prediction: torch.Tensor, target: torch.Tensor, reduction: str = 'mean',

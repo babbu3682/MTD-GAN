@@ -2,7 +2,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 
-from piq.base import BaseFeatureMetric
+from module.piq.base import BaseFeatureMetric
 
 
 def _polynomial_kernel(

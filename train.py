@@ -124,7 +124,7 @@ def main(args):
 
 
     # Optimizer & LR Schedule
-    if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'MTD_GAN' or args.model_name == 'MTD_GAN_V2' or args.model_name == 'MTD_GAN_V3' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_F' or args.model_name == 'Ablation_G':
+    if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
         optimizer_G    = create_optim(name=args.optimizer, model=model.Generator, args=args)
         optimizer_D    = create_optim(name=args.optimizer, model=model.Discriminator, args=args)
         lr_scheduler_G = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
@@ -165,7 +165,7 @@ def main(args):
         checkpoint['model_state_dict'] = {k.replace('.module', ''):v for k,v in checkpoint['model_state_dict'].items()} # fix loading multi-gpu 
         model.load_state_dict(checkpoint['model_state_dict'])   
         args.start_epoch = checkpoint['epoch'] + 1      
-        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'MTD_GAN_V2' or args.model_name == 'MTD_GAN_V3' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_F' or args.model_name == 'Ablation_G':
+        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
             optimizer_G.load_state_dict(checkpoint['optimizer_G'])
             optimizer_D.load_state_dict(checkpoint['optimizer_D'])
             lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])    
@@ -173,6 +173,11 @@ def main(args):
             # Optimizer Error fix...!
             fix_optimizer(optimizer_G)
             fix_optimizer(optimizer_D)
+
+            if args.pcgrad:
+                optimizer_G = PCGrad(optimizer_G)
+                optimizer_D = PCGrad(optimizer_D)
+                            
         elif args.model_name == 'DU_GAN':
             optimizer_G.load_state_dict(checkpoint['optimizer_G'])
             optimizer_Img_D.load_state_dict(checkpoint['optimizer_Img_D'])
@@ -204,7 +209,7 @@ def main(args):
 
     # Multi-GPU
     if args.multi_gpu_mode == 'DataParallel':
-        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'MTD_GAN_V2' or args.model_name == 'MTD_GAN_V3' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_F' or args.model_name == 'Ablation_G':
+        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
             model.Generator             = torch.nn.DataParallel(model.Generator)         
             model.Discriminator         = torch.nn.DataParallel(model.Discriminator)
             model.Generator.to(device)   
@@ -292,7 +297,7 @@ def main(args):
             print("Averaged valid_stats: ", valid_stats)
 
 
-        elif args.model_name == 'MTD_GAN' or args.model_name == 'MTD_GAN_V2' or args.model_name == 'MTD_GAN_V3' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_F' or args.model_name == 'Ablation_G':
+        elif args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
             train_stats = train_MTD_GAN_Ours(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size, args.pcgrad)
             print("Averaged train_stats: ", train_stats)
             valid_stats = valid_MTD_GAN_Ours(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
@@ -307,7 +312,7 @@ def main(args):
         if epoch % args.save_checkpoint_every == 0:
             checkpoint_path = args.checkpoint_dir + '/epoch_' + str(epoch) + '_checkpoint.pth'
 
-            if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'MTD_GAN_V2' or args.model_name == 'MTD_GAN_V3' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_F' or args.model_name == 'Ablation_G':
+            if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
                 if args.pcgrad:
                     torch.save({
                         'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
@@ -372,7 +377,7 @@ def main(args):
             with open(args.checkpoint_dir + "/log.txt", "a") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
-        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'MTD_GAN_V2' or args.model_name == 'MTD_GAN_V3' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_F' or args.model_name == 'Ablation_G':
+        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
             lr_scheduler_G.step(epoch)
             lr_scheduler_D.step(epoch)
         elif args.model_name == 'DU_GAN':            

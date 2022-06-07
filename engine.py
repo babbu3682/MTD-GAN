@@ -10,9 +10,9 @@ from tqdm import tqdm
 import sys
 import os 
 import matplotlib.pyplot as plt
-from metrics import compute_measure, compute_measure_3D
+from metrics import compute_measure, compute_measure_3D, compute_FID, compute_Perceptual, compute_feat
 from monai.inferers import sliding_window_inference
-from module.sliding_window_inference_SACNN import sliding_window_inference_sacnn
+from module.sliding_window_inference_multi_output import sliding_window_inference_multi_output
 
 
 def dicom_denormalize(image, MIN_HU=-1024.0, MAX_HU=3072.0):
@@ -56,13 +56,11 @@ fn_tonumpy3d      = lambda x: x.cpu().detach().numpy().transpose(0, 1, 3, 4, 2)
 ###################################################################             Ours                                ###################################################################
 # CNN Based  ################################################
 # 1.
-def train_CNN_Based_Ours(model, criterion, data_loader, optimizer, device, epoch, patch_training, loss_name):
+def train_CNN_Based_Ours(model, data_loader, optimizer, device, epoch, patch_training, print_freq, batch_size):
     model.train(True)
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Train: [epoch:{}]'.format(epoch)
-    print_freq = 10  
-    loss_detail = None
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         
@@ -74,40 +72,9 @@ def train_CNN_Based_Ours(model, criterion, data_loader, optimizer, device, epoch
             input_n_20   = batch_data['n_20'].to(device).float()
             input_n_100  = batch_data['n_100'].to(device).float()
         
-
-        if model._get_name() == "ResFFT_Freq_SPADE_Att_window":
-            input_n_20  = input_n_20.clip(0.250,  0.270)
-            input_n_20 -= input_n_20.min()
-            input_n_20 /= input_n_20.max()
-
-            input_n_100 = input_n_100.clip(0.250,  0.270)
-            input_n_100 -= input_n_100.min()
-            input_n_100 /= input_n_100.max()
-
         pred_n_100 = model(input_n_20)
-        # print("Check = ", pred_n_100[0].max(), pred_n_100[0].min(), pred_n_100[0].dtype, pred_n_100[0].shape)
-        # print("Check = ", input_n_100.max(), input_n_100.min(), input_n_100.dtype, input_n_100.shape) # [32, 1, 64, 64]
-        if loss_name == 'Change L2 L1 Loss':
-            loss = criterion(pred_n_100, input_n_100, epoch)
 
-        elif loss_name == 'Perceptual_Triple+L1_Loss':    
-            loss = criterion(gt_low=input_n_20, gt_high=input_n_100, target=pred_n_100)            
-
-        elif loss_name == 'Window L1 Loss':    
-            loss = criterion(gt_high=input_n_100, target=pred_n_100)       
-
-        elif loss_name == 'Perceptual+L1 Loss':    
-            loss = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)       
-
-        elif loss_name == 'Charbonnier_HighFreq_Loss':    
-            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)       
-
-        elif loss_name == 'Charbonnier_Edge_MSFR_Loss':    
-            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)           
-
-        elif loss_name == 'Charbonnier_Edge_MSFR_VGG_Loss':    
-            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)                               
-
+        loss = model.criterion(pred_n_100, input_n_100)
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -118,108 +85,48 @@ def train_CNN_Based_Ours(model, criterion, data_loader, optimizer, device, epoch
         optimizer.step()
 
         metric_logger.update(loss=loss_value)
-        if loss_detail is not None:
-            metric_logger.update(**loss_detail)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def valid_CNN_Based_Ours(model, criterion, data_loader, device, epoch, save_dir, loss_name):
+def valid_CNN_Based_Ours(model, criterion, data_loader, device, epoch, png_save_dir, print_freq, batch_size):
     model.eval()
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ", n=batch_size)
     header = 'Valid: [epoch:{}]'.format(epoch)
-    print_freq = 200    
-    loss_detail = None
-
-    os.makedirs(save_dir, mode=0o777, exist_ok=True)
+    os.makedirs(png_save_dir, mode=0o777, exist_ok=True) 
 
     for batch_data in metric_logger.log_every(data_loader, print_freq, header):
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
         
-        if model._get_name() == "ResFFT_Freq_SPADE_Att_window":
-            input_n_20  = input_n_20.clip(0.250,  0.270)
-            input_n_20 -= input_n_20.min()
-            input_n_20 /= input_n_20.max()
 
-            input_n_100 = input_n_100.clip(0.250,  0.270)
-            input_n_100 -= input_n_100.min()
-            input_n_100 /= input_n_100.max()
+        pred_n_100 = model(input_n_20)
 
-        if hasattr(model, 'module'):
-            if model.module._get_name() == "SPADE_UNet" or model.module._get_name() == "SPADE_UNet_Upgrade" or model.module._get_name() == "ResFFT_LFSPADE" or model.module._get_name() == 'ResFFT_Freq_SPADE_Att' or model.module._get_name() == 'ResFFT_Freq_SPADE_Att_window':
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.module, overlap=0.5, mode='constant')
-            else:
-                pred_n_100 = model(input_n_20)
-
-        else :
-            if model._get_name() == "SPADE_UNet" or model._get_name() == "SPADE_UNet_Upgrade" or model._get_name() == "ResFFT_LFSPADE" or model._get_name() == 'ResFFT_Freq_SPADE_Att' or model._get_name() == 'ResFFT_Freq_SPADE_Att_window':
-                pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
-            else:
-                pred_n_100 = model(input_n_20)
-
-
-        if loss_name == 'Change L2 L1 Loss':
-            loss = criterion(pred_n_100, input_n_100, epoch)
-
-        elif loss_name == 'Perceptual_Triple+L1_Loss':    
-            loss = criterion(gt_low=input_n_20, gt_high=input_n_100, target=pred_n_100)            
-
-        elif loss_name == 'Window L1 Loss':    
-            loss = criterion(gt_high=input_n_100, target=pred_n_100)    
-
-        elif loss_name == 'Perceptual+L1 Loss':    
-            loss = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)       
-
-        elif loss_name == 'Charbonnier_HighFreq_Loss':    
-            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100) 
-
-        elif loss_name == 'Charbonnier_Edge_MSFR_Loss':    
-            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100) 
-
-        elif loss_name == 'Charbonnier_Edge_MSFR_VGG_Loss':    
-            loss, loss_detail = criterion(gt_100=input_n_100, pred_n_100=pred_n_100)             
-
-        loss_value = loss.item()
-
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-
-        metric_logger.update(loss=loss_value)
-        if loss_detail is not None:
-            metric_logger.update(**loss_detail)
+        L1_loss = criterion(pred_n_100, input_n_100)
+        loss_value = L1_loss.item()
+        metric_logger.update(L1_loss=loss_value)
  
-        
-    # Gather the stats from all processes
-    print("Averaged stats:", metric_logger)
+    # Denormalize (No windowing input version)
+    # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
+    # input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
+    # pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
+    # # PNG Save
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
-    if model._get_name() == "ResFFT_Freq_SPADE_Att_window":
-        # PNG Save
-        input_n_20   = fn_tonumpy(input_n_20)
-        input_n_100  = fn_tonumpy(input_n_100)
-        pred_n_100   = fn_tonumpy(pred_n_100)
+    # Denormalize (windowing input version)
+    input_n_20   = fn_tonumpy(input_n_20)
+    input_n_100  = fn_tonumpy(input_n_100)
+    pred_n_100   = fn_tonumpy(pred_n_100)
+    # PNG Save
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
-        print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')    
-        plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
-        plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray")
-        plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
+    return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
-    else: 
-        # PNG Save
-        input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
-        input_n_100  = dicom_denormalize(fn_tonumpy(input_n_100)).clip(min=0, max=80)
-        pred_n_100   = dicom_denormalize(fn_tonumpy(pred_n_100)).clip(min=0, max=80) 
-
-        print(save_dir+'epoch_'+str(epoch)+'_input_n_20.png')    
-        plt.imsave(save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+'epoch_'+str(epoch)+'_gt_n_100.png', input_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
 def test_CNN_Based_Ours(model, data_loader, device, save_dir):
@@ -691,13 +598,18 @@ def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_di
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
 
+        # Generator
         pred_n_100 = model.Generator(input_n_20)     
         # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
-            
-        L1_loss = criterion(pred_n_100, input_n_100)
-        loss_value = L1_loss.item()
-        metric_logger.update(L1_loss=loss_value)
+        
+        # Discriminator
+        real_dec,  real_rec = sliding_window_inference_multi_output(inputs=input_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
+        fake_dec,  fake_rec = sliding_window_inference_multi_output(inputs=pred_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
 
+        L1_loss = criterion(pred_n_100, input_n_100)
+        metric_logger.update(L1_loss=L1_loss.item())
+        vgg_loss = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
+        metric_logger.update(VGG_loss=vgg_loss.item())
 
     # # Denormalize (No windowing input version)
     # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
@@ -712,10 +624,20 @@ def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_di
     input_n_20   = fn_tonumpy(input_n_20)
     input_n_100  = fn_tonumpy(input_n_100)
     pred_n_100   = fn_tonumpy(pred_n_100)
+    real_dec   = fn_tonumpy(real_dec)
+    real_rec   = fn_tonumpy(real_rec)
+    fake_dec   = fn_tonumpy(fake_dec)
+    fake_rec   = fn_tonumpy(fake_rec)    
+
     # PNG Save
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
+    
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_dec.png', real_dec.squeeze(), cmap="jet")    
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_rec.png', real_rec.squeeze(), cmap="gray")    
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_dec.png', fake_dec.squeeze(), cmap="jet")    
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_rec.png', fake_rec.squeeze(), cmap="gray")
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -723,6 +645,10 @@ def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_di
 def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
     model.Generator.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)
+
+    x_features    = []
+    y_features    = []
+    pred_features = []
 
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
@@ -762,11 +688,16 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
         # Denormalize (windowing input version)
-        input_n_20    = fn_tonumpy(input_n_20)
-        input_n_100   = fn_tonumpy(input_n_100)
-        pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # Perceptual & FID
+        x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
+        input_n_20, input_n_100, pred_n_100 = fn_tonumpy(input_n_20), fn_tonumpy(input_n_100), fn_tonumpy(pred_n_100)
+
         original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
         metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
@@ -797,6 +728,10 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
         # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
+    # FID
+    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -883,6 +818,10 @@ def test_CNN_Based_Previous(model, criterion, data_loader, device, png_save_dir)
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)
 
+    x_features    = []
+    y_features    = []
+    pred_features = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -920,11 +859,16 @@ def test_CNN_Based_Previous(model, criterion, data_loader, device, png_save_dir)
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
         # Denormalize (windowing input version)
-        input_n_20    = fn_tonumpy(input_n_20)
-        input_n_100   = fn_tonumpy(input_n_100)
-        pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # Perceptual & FID
+        x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
+        input_n_20, input_n_100, pred_n_100 = fn_tonumpy(input_n_20), fn_tonumpy(input_n_100), fn_tonumpy(pred_n_100)
+
         original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
         metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
@@ -934,6 +878,10 @@ def test_CNN_Based_Previous(model, criterion, data_loader, device, png_save_dir)
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
+    # FID
+    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -958,7 +906,7 @@ def train_Transformer_Based_Previous(model, data_loader, optimizer, device, epoc
 
         if model._get_name() == "Restormer":
             loss = model.criterion(pred_n_100, input_n_100)
-        elif model._get_name() == "TED_Net" or model._get_name() == "CTformer":
+        elif model._get_name() == "CTformer":
             loss = model.criterion(pred_n_100, input_n_100)*100 + 1e-4  # to prevent 0
 
         loss_value = loss.item()
@@ -1017,6 +965,10 @@ def test_Transformer_Based_Previous(model, criterion, data_loader, device, png_s
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)
 
+    x_features    = []
+    y_features    = []
+    pred_features = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -1034,44 +986,52 @@ def test_Transformer_Based_Previous(model, criterion, data_loader, device, png_s
         os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
     
 
-        # Denormalize (No windowing input version)
-        input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
-        input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
-        pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
+        # # Denormalize (No windowing input version)
+        # input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
+        # input_n_100   = dicom_denormalize(fn_tonumpy(input_n_100))
+        # pred_n_100    = dicom_denormalize(fn_tonumpy(pred_n_100))       
                 
-        # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
-        metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
-        metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
-        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
-
-        # DCM Save
-        save_dicom(batch_data['path_n_20'][0],  input_n_20,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
-        save_dicom(batch_data['path_n_100'][0], input_n_100, png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
-        save_dicom(batch_data['path_n_20'][0],  pred_n_100,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
-
-        # PNG Save clip for windowing visualize, brain:[0, 80] HU
-        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
-        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.clip(min=0, max=80).squeeze(), cmap="gray", vmin=0, vmax=80)
-        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
-
-
-        # # Denormalize (windowing input version)
-        # input_n_20    = fn_tonumpy(input_n_20)
-        # input_n_100   = fn_tonumpy(input_n_100)
-        # pred_n_100    = fn_tonumpy(pred_n_100)  
-
         # # Metric
-        # original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)
+        # original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=4095.0)
         # metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         # metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
         # metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
-        # # PNG Save clip for windowing visualize, brain:[0, 80] HU
-        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
-        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
-        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+        # # DCM Save
+        # save_dicom(batch_data['path_n_20'][0],  input_n_20,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.dcm'))        
+        # save_dicom(batch_data['path_n_100'][0], input_n_100, png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_100'][0].split('/')[7] + '/' + batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.dcm'))
+        # save_dicom(batch_data['path_n_20'][0],  pred_n_100,  png_save_dir.replace('/png/', '/dcm/')+batch_data['path_n_20'][0].split('/')[7]  + '/' + batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.dcm'))        
 
+        # # PNG Save clip for windowing visualize, brain:[0, 80] HU
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
+        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.clip(min=0, max=80).squeeze(), cmap="gray", vmin=0, vmax=80)
+        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
+
+
+        # Denormalize (windowing input version)
+
+        # Perceptual & FID
+        x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
+
+        # Metric
+        input_n_20, input_n_100, pred_n_100 = fn_tonumpy(input_n_20), fn_tonumpy(input_n_100), fn_tonumpy(pred_n_100)
+
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
+        metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
+        metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
+        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
+
+        # PNG Save clip for windowing visualize, brain:[0, 80] HU
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
+        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
+    # FID
+    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -1160,6 +1120,10 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
     model.Generator.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)    
 
+    x_features    = []
+    y_features    = []
+    pred_features = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -1198,12 +1162,17 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
         # Denormalize (windowing input version)
-        input_n_20    = fn_tonumpy(input_n_20)
-        input_n_100   = fn_tonumpy(input_n_100)
-        pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # Perceptual & FID
+        x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)
+        input_n_20, input_n_100, pred_n_100 = fn_tonumpy(input_n_20), fn_tonumpy(input_n_100), fn_tonumpy(pred_n_100)
+
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
         metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
         metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
@@ -1212,8 +1181,13 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+    
+    # FID
+    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
+
 
 # 2.MAP_NN
 def train_MAP_NN_Previous(model, data_loader, optimizer_G, optimizer_D, device, epoch, patch_training, print_freq, batch_size):
@@ -1295,7 +1269,11 @@ def valid_MAP_NN_Previous(model, criterion, data_loader, device, epoch, png_save
 def test_MAP_NN_Previous(model, criterion, data_loader, device, png_save_dir):
     model.Generator.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)    
-    
+
+    x_features    = []
+    y_features    = []
+    pred_features = []
+
     iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
     for batch_data in iterator:
         
@@ -1335,20 +1313,29 @@ def test_MAP_NN_Previous(model, criterion, data_loader, device, png_save_dir):
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
         # Denormalize (windowing input version)
-        input_n_20    = fn_tonumpy(input_n_20)
-        input_n_100   = fn_tonumpy(input_n_100)
-        pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # Perceptual & FID
+        x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)
+        input_n_20, input_n_100, pred_n_100 = fn_tonumpy(input_n_20), fn_tonumpy(input_n_100), fn_tonumpy(pred_n_100)
+
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
         metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
-        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])    
+        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
         # PNG Save clip for windowing visualize, brain:[0, 80] HU
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
+    # FID
+    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -1432,7 +1419,10 @@ def valid_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, ep
 def test_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, png_save_dir):
     model.Generator.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)    
-    
+
+    x_features    = []
+    y_features    = []
+    pred_features = []    
     
     iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
     for batch_data in iterator:
@@ -1473,20 +1463,29 @@ def test_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, png
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
         # Denormalize (windowing input version)
-        input_n_20    = fn_tonumpy(input_n_20)
-        input_n_100   = fn_tonumpy(input_n_100)
-        pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # Perceptual & FID
+        x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)
+        input_n_20, input_n_100, pred_n_100 = fn_tonumpy(input_n_20), fn_tonumpy(input_n_100), fn_tonumpy(pred_n_100)
+
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
         metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
-        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])    
+        metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
         # PNG Save clip for windowing visualize, brain:[0, 80] HU
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+
+    # FID
+    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -1583,7 +1582,10 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
     model.Generator.eval()
     metric_logger = utils.MetricLogger(delimiter="  ", n=1)    
     
-    cnt = 0
+    x_features    = []
+    y_features    = []
+    pred_features = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -1622,26 +1624,29 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
         # Denormalize (windowing input version)
-        input_n_20    = fn_tonumpy(input_n_20)
-        input_n_100   = fn_tonumpy(input_n_100)
-        pred_n_100    = fn_tonumpy(pred_n_100)  
+
+        # Perceptual & FID
+        x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
-        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)
+        input_n_20, input_n_100, pred_n_100 = fn_tonumpy(input_n_20), fn_tonumpy(input_n_100), fn_tonumpy(pred_n_100)
+
+        original_result, pred_result, gt_result = compute_measure(x=torch.tensor(input_n_20).squeeze(), y=torch.tensor(input_n_100).squeeze(), pred=torch.tensor(pred_n_100).squeeze(), data_range=1.0)        
         metric_logger.update(input_psnr=original_result[0], input_ssim=original_result[1], input_rmse=original_result[2])   
         metric_logger.update(pred_psnr=pred_result[0],      pred_ssim=pred_result[1],      pred_rmse=pred_result[2])   
         metric_logger.update(gt_psnr=gt_result[0],          gt_ssim=gt_result[1],          gt_rmse=gt_result[2])   
 
         # PNG Save clip for windowing visualize, brain:[0, 80] HU
-        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
-        # plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
-        # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
+        plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
+        plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
-        np.save('/workspace/sunggu/denoising/input_n_20_'+str(cnt), input_n_20)
-        np.save('/workspace/sunggu/denoising/gt_n_100_'+str(cnt), input_n_100)
-        np.save('/workspace/sunggu/denoising/pred_n_100_'+str(cnt), pred_n_100)
-        cnt += 1
-
+    # FID
+    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 

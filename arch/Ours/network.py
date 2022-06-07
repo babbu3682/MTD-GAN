@@ -1112,15 +1112,41 @@ def ls_gan_with_weight(inputs, targets, diffs):
 def ls_gan_with_weight_upgrade(inputs, targets, diffs):
     return torch.mean( torch.abs(diffs).bool() * (inputs - targets)**2 )
 
+
+class REDCNN_Generator(nn.Module):
+    def __init__(self, in_channels=1, out_channels=96, num_layers=10, kernel_size=5, padding=0):
+        super(REDCNN_Generator, self).__init__()
+        encoder = [nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)]
+        decoder = [nn.ConvTranspose2d(out_channels, in_channels, kernel_size=kernel_size, stride=1, padding=padding)]
+        for _ in range(num_layers):
+            encoder.append(nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
+            decoder.append(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
+        self.encoder = nn.ModuleList(encoder)
+        self.decoder = nn.ModuleList(decoder)
+        self.__init_weights()
+
+    def __init_weights(self):
+        for m in self.modules():
+            classname = m.__class__.__name__
+            if classname.find('Conv') != -1:
+                m.weight.data.normal_(0, 0.01)
+                if hasattr(m.bias, 'data'):
+                    m.bias.data.fill_(0)
+
+    def forward(self, x: torch.Tensor):
+        residuals = []
+        for block in self.encoder:
+            residuals.append(x)
+            x = F.relu(block(x))
+        for residual, block in zip(residuals[::-1], self.decoder[::-1]):
+            x = F.relu(block(x) + residual)
+        return x
+
 class FFT_ConvBlock(nn.Module):
     def __init__(self, out_channels):
         super(FFT_ConvBlock, self).__init__()
         self.img_conv  = nn.Conv2d(out_channels,   out_channels,   kernel_size=3, stride=1, padding=1)
         self.fft_conv  = nn.Conv2d(out_channels*2, out_channels*2, kernel_size=1, stride=1, padding=0)
-
-        # Mixing
-        self.conv1x1 = nn.Conv2d(out_channels*3, out_channels, kernel_size=1, stride=1, padding=0, bias=True)
-
 
     def forward(self, x):
         # Fourier domain   
@@ -1136,9 +1162,7 @@ class FFT_ConvBlock(nn.Module):
         img = F.relu(self.img_conv(x))
 
         # Mixing (residual, image, fourier)
-        mix    = torch.cat([x, img, fft], dim=1)
-        output = F.relu(self.conv1x1(mix))
-
+        output = x + img + fft
         return output        
 
 class FFT_Generator(nn.Module):
@@ -1238,340 +1262,6 @@ class FFT_Generator(nn.Module):
         
         return d0
 
-# A type
-class FFT_ConvBlock_A(nn.Module):
-    def __init__(self, out_channels):
-        super(FFT_ConvBlock_A, self).__init__()
-        self.img_conv  = nn.Conv2d(out_channels,   out_channels,   kernel_size=3, stride=1, padding=1)
-        self.fft_conv  = nn.Conv2d(out_channels*2, out_channels*2, kernel_size=1, stride=1, padding=0)
-
-    def forward(self, x):
-        # Fourier domain   
-        _, _, H, W = x.shape
-        fft = torch.fft.rfft2(x, s=(H, W), dim=(2, 3), norm='ortho')
-        fft = torch.cat([fft.real, fft.imag], dim=1)
-        fft = F.relu(self.fft_conv(fft))
-        fft_real, fft_imag = torch.chunk(fft, 2, dim=1)        
-        fft = torch.complex(fft_real, fft_imag)
-        fft = torch.fft.irfft2(fft, s=(H, W), dim=(2, 3), norm='ortho')
-        
-        # Image domain  
-        img = F.relu(self.img_conv(x))
-
-        # Mixing (residual, image, fourier)
-        output = x + img + fft
-        return output        
-
-class FFT_Generator_A(nn.Module):
-    def __init__(self, in_channels=1, out_channels=96, num_layers=10, kernel_size=5, padding=0):
-        super(FFT_Generator_A, self).__init__()
-        encoder = [nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)]
-        decoder = [nn.ConvTranspose2d(out_channels, in_channels, kernel_size=kernel_size, stride=1, padding=padding)]
-        enforce = []
-        for _ in range(num_layers):
-            encoder.append(nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
-            decoder.append(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
-        self.encoder = nn.ModuleList(encoder)
-        self.decoder = nn.ModuleList(decoder)
-
-        for _ in range(21):
-            enforce.append(FFT_ConvBlock_A(out_channels))
-        self.enforce = nn.ModuleList(enforce)
-
-        self.__init_weights()
-
-    def __init_weights(self):
-        for m in self.modules():
-            if type(m) in {nn.Conv2d, nn.Linear}:                
-                m.weight.data.normal_(0, 0.01)
-                if hasattr(m.bias, 'data'):
-                    m.bias.data.fill_(0)
-
-
-    def forward(self, x: torch.Tensor):
-    
-        e1 = F.relu(self.encoder[0](x))
-        e1 = self.enforce[0](e1)
-
-        e2 = F.relu(self.encoder[1](e1))
-        e2 = self.enforce[1](e2)
-
-        e3 = F.relu(self.encoder[2](e2))
-        e3 = self.enforce[2](e3)
-
-        e4 = F.relu(self.encoder[3](e3))
-        e4 = self.enforce[3](e4)
-
-        e5 = F.relu(self.encoder[4](e4))
-        e5 = self.enforce[4](e5)
-
-        e6 = F.relu(self.encoder[5](e5))
-        e6 = self.enforce[5](e6)
-
-        e7 = F.relu(self.encoder[6](e6))
-        e7 = self.enforce[6](e7)
-
-        e8 = F.relu(self.encoder[7](e7))
-        e8 = self.enforce[7](e8)
-
-        e9 = F.relu(self.encoder[8](e8))
-        e9 = self.enforce[8](e9)
-
-        e10 = F.relu(self.encoder[9](e9))
-        e10 = self.enforce[9](e10)
-
-        # Bottleneck
-        x_b = F.relu(self.encoder[10](e10))
-        x_b = self.enforce[10](x_b)                
-
-        # Decoder
-        d10 = F.relu(self.decoder[-1](x_b) + e10)
-
-        d9  = self.enforce[11](d10)
-        d9  = F.relu(self.decoder[-2](d9) + e9)
-
-        d8  = self.enforce[12](d9)
-        d8  = F.relu(self.decoder[-3](d8) + e8)
-
-        d7  = self.enforce[13](d8)
-        d7  = F.relu(self.decoder[-4](d7) + e7)
-          
-        d6  = self.enforce[14](d7)
-        d6  = F.relu(self.decoder[-5](d6) + e6)
-
-        d5  = self.enforce[15](d6)
-        d5  = F.relu(self.decoder[-6](d5) + e5)
-
-        d4  = self.enforce[16](d5)
-        d4  = F.relu(self.decoder[-7](d4) + e4)
-
-        d3  = self.enforce[17](d4)
-        d3  = F.relu(self.decoder[-8](d3) + e3)
-
-        d2  = self.enforce[18](d3)
-        d2  = F.relu(self.decoder[-9](d2) + e2)
-
-        d1  = self.enforce[19](d2)
-        d1  = F.relu(self.decoder[-10](d1) + e1)
-
-        d0  = self.enforce[20](d1)
-        d0  = F.relu(self.decoder[-11](d0) + x)                                                          
-        
-        return d0
-
-# B type
-class FFT_ConvBlock_B(nn.Module):
-    def __init__(self, out_channels):
-        super(FFT_ConvBlock_B, self).__init__()
-        self.fft_conv  = nn.Conv2d(out_channels*2, out_channels*2, kernel_size=1, stride=1, padding=0)
-
-    def forward(self, x):
-        # Fourier domain   
-        _, _, H, W = x.shape
-        fft = torch.fft.rfft2(x, s=(H, W), dim=(2, 3), norm='ortho')
-        fft = torch.cat([fft.real, fft.imag], dim=1)
-        fft = F.relu(self.fft_conv(fft))
-        fft_real, fft_imag = torch.chunk(fft, 2, dim=1)        
-        fft = torch.complex(fft_real, fft_imag)
-        fft = torch.fft.irfft2(fft, s=(H, W), dim=(2, 3), norm='ortho')
-
-        # Mixing (residual, image, fourier)
-        output = x + fft
-        return output        
-
-class FFT_Generator_B(nn.Module):
-    def __init__(self, in_channels=1, out_channels=96, num_layers=10, kernel_size=5, padding=0):
-        super(FFT_Generator_B, self).__init__()
-        encoder = [nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)]
-        decoder = [nn.ConvTranspose2d(out_channels, in_channels, kernel_size=kernel_size, stride=1, padding=padding)]
-        enforce = []
-        for _ in range(num_layers):
-            encoder.append(nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
-            decoder.append(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
-        self.encoder = nn.ModuleList(encoder)
-        self.decoder = nn.ModuleList(decoder)
-
-        for _ in range(21):
-            enforce.append(FFT_ConvBlock_B(out_channels))
-        self.enforce = nn.ModuleList(enforce)
-
-        self.__init_weights()
-
-    def __init_weights(self):
-        for m in self.modules():
-            if type(m) in {nn.Conv2d, nn.Linear}:                
-                m.weight.data.normal_(0, 0.01)
-                if hasattr(m.bias, 'data'):
-                    m.bias.data.fill_(0)
-
-
-    def forward(self, x: torch.Tensor):
-    
-        e1 = F.relu(self.encoder[0](x))
-        e1 = self.enforce[0](e1)
-
-        e2 = F.relu(self.encoder[1](e1))
-        e2 = self.enforce[1](e2)
-
-        e3 = F.relu(self.encoder[2](e2))
-        e3 = self.enforce[2](e3)
-
-        e4 = F.relu(self.encoder[3](e3))
-        e4 = self.enforce[3](e4)
-
-        e5 = F.relu(self.encoder[4](e4))
-        e5 = self.enforce[4](e5)
-
-        e6 = F.relu(self.encoder[5](e5))
-        e6 = self.enforce[5](e6)
-
-        e7 = F.relu(self.encoder[6](e6))
-        e7 = self.enforce[6](e7)
-
-        e8 = F.relu(self.encoder[7](e7))
-        e8 = self.enforce[7](e8)
-
-        e9 = F.relu(self.encoder[8](e8))
-        e9 = self.enforce[8](e9)
-
-        e10 = F.relu(self.encoder[9](e9))
-        e10 = self.enforce[9](e10)
-
-        # Bottleneck
-        x_b = F.relu(self.encoder[10](e10))
-        x_b = self.enforce[10](x_b)                
-
-        # Decoder
-        d10 = F.relu(self.decoder[-1](x_b) + e10)
-
-        d9  = self.enforce[11](d10)
-        d9  = F.relu(self.decoder[-2](d9) + e9)
-
-        d8  = self.enforce[12](d9)
-        d8  = F.relu(self.decoder[-3](d8) + e8)
-
-        d7  = self.enforce[13](d8)
-        d7  = F.relu(self.decoder[-4](d7) + e7)
-          
-        d6  = self.enforce[14](d7)
-        d6  = F.relu(self.decoder[-5](d6) + e6)
-
-        d5  = self.enforce[15](d6)
-        d5  = F.relu(self.decoder[-6](d5) + e5)
-
-        d4  = self.enforce[16](d5)
-        d4  = F.relu(self.decoder[-7](d4) + e4)
-
-        d3  = self.enforce[17](d4)
-        d3  = F.relu(self.decoder[-8](d3) + e3)
-
-        d2  = self.enforce[18](d3)
-        d2  = F.relu(self.decoder[-9](d2) + e2)
-
-        d1  = self.enforce[19](d2)
-        d1  = F.relu(self.decoder[-10](d1) + e1)
-
-        d0  = self.enforce[20](d1)
-        d0  = F.relu(self.decoder[-11](d0) + x)                                                          
-        
-        return d0
-
-# C type
-class FFT_ConvBlock_C(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(FFT_ConvBlock_C, self).__init__()
-        self.img_conv  = nn.Conv2d(in_channels,   out_channels,   kernel_size=3, stride=1, padding=1)
-        self.fft_conv  = nn.Conv2d(in_channels*2, out_channels*2, kernel_size=1, stride=1, padding=0)
-
-    def forward(self, x):
-        # Fourier domain   
-        _, _, H, W = x.shape
-        fft = torch.fft.rfft2(x, s=(H, W), dim=(2, 3), norm='ortho')
-        fft = torch.cat([fft.real, fft.imag], dim=1)
-        fft = F.relu(self.fft_conv(fft))
-        fft_real, fft_imag = torch.chunk(fft, 2, dim=1)        
-        fft = torch.complex(fft_real, fft_imag)
-        fft = torch.fft.irfft2(fft, s=(H, W), dim=(2, 3), norm='ortho')
-
-        # Image domain  
-        img = F.relu(self.img_conv(x))
-
-        # Mixing (image, fourier)
-        output = img + fft
-        return output        
-
-class FFT_Generator_C(nn.Module):
-    def __init__(self, in_channels=1, out_channels=96, num_layers=10, kernel_size=5, padding=0):
-        super(FFT_Generator_C, self).__init__()
-        encoder = [FFT_ConvBlock_C(in_channels, out_channels)]
-        decoder = [FFT_ConvBlock_C(out_channels, in_channels)]
-        for _ in range(num_layers):
-            encoder.append(FFT_ConvBlock_C(out_channels, out_channels))
-            decoder.append(FFT_ConvBlock_C(out_channels, out_channels))
-        self.encoder = nn.ModuleList(encoder)
-        self.decoder = nn.ModuleList(decoder)
-
-        self.__init_weights()
-
-    def __init_weights(self):
-        for m in self.modules():
-            if type(m) in {nn.Conv2d, nn.Linear}:                
-                m.weight.data.normal_(0, 0.01)
-                if hasattr(m.bias, 'data'):
-                    m.bias.data.fill_(0)
-
-
-    def forward(self, x: torch.Tensor):
-    
-        e1 = F.relu(self.encoder[0](x))
-
-        e2 = F.relu(self.encoder[1](e1))
-
-        e3 = F.relu(self.encoder[2](e2))
-
-        e4 = F.relu(self.encoder[3](e3))
-
-        e5 = F.relu(self.encoder[4](e4))
-
-        e6 = F.relu(self.encoder[5](e5))
-
-        e7 = F.relu(self.encoder[6](e6))
-
-        e8 = F.relu(self.encoder[7](e7))
-
-        e9 = F.relu(self.encoder[8](e8))
-
-        e10 = F.relu(self.encoder[9](e9))
-
-        # Bottleneck
-        x_b = F.relu(self.encoder[10](e10))
-    
-        # Decoder
-        d10 = F.relu(self.decoder[-1](x_b) + e10)
-
-        d9  = F.relu(self.decoder[-2](d10) + e9)
-
-        d8  = F.relu(self.decoder[-3](d9) + e8)
-
-        d7  = F.relu(self.decoder[-4](d8) + e7)
-          
-        d6  = F.relu(self.decoder[-5](d7) + e6)
-
-        d5  = F.relu(self.decoder[-6](d6) + e5)
-
-        d4  = F.relu(self.decoder[-7](d5) + e4)
-
-        d3  = F.relu(self.decoder[-8](d4) + e3)
-
-        d2  = F.relu(self.decoder[-9](d3) + e2)
-
-        d1  = F.relu(self.decoder[-10](d2) + e1)
-
-        d0  = F.relu(self.decoder[-11](d1) + x)                                                          
-        
-        return d0
-
-
 class UpsampleBlock(nn.Module):
     def __init__(self, scale, input_channels, output_channels):
         super(UpsampleBlock, self).__init__()
@@ -1582,6 +1272,21 @@ class UpsampleBlock(nn.Module):
 
     def forward(self, input):
         return self.upsample(input)
+
+# GeM pool: https://arxiv.org/pdf/1711.02512.pdf
+# https://github.com/filipradenovic/cnnimageretrieval-pytorch/tree/6d4ce7854198f132176965761a3dc26fffaf66c5
+# https://github.com/damo-cv/TransReID-SSL/blob/fc39e88240aa7cb7b28dd2097e7f161ae2be3ad8/transreid_pytorch/model/backbones/vit_pytorch.py
+class GeneralizedMeanPooling(nn.Module):
+    def __init__(self, p=3, eps=1e-6):
+        super(GeneralizedMeanPooling, self).__init__()
+        self.p   = nn.Parameter(torch.ones(1)*p)
+        self.eps = eps
+
+    def gem(self, x, p=3, eps=1e-6):
+        return F.adaptive_avg_pool2d(input=x.clamp(min=eps).pow(p), output_size=1).pow(1./p)
+
+    def forward(self, x):
+        return self.gem(x, p=self.p, eps=self.eps)
 
 class Multi_Task_Discriminator(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -1704,13 +1409,12 @@ class Multi_Task_Discriminator(nn.Module):
         self.r_drelu62   = nn.LeakyReLU(0.2)  
 
         # Heads
-        # self.enc_out   = nn.Sequential(nn.Flatten(), nn.Dropout(p=0.3), nn.Linear(32768, 1))
         self.enc_out   = nn.Sequential(nn.Flatten(), nn.Dropout(p=0.3), nn.Linear(512, 1))
         self.dec_out   = nn.Conv2d(in_channels, 1, 1)
         self.rec_out   = nn.Conv2d(in_channels, 1, 1)
         
         # POOL
-        # self.gem_pool  = GeneralizedMeanPooling()
+        self.gem_pool  = GeneralizedMeanPooling()
 
         self.__init_weights()
 
@@ -1808,183 +1512,237 @@ class Multi_Task_Discriminator(nn.Module):
 
         return x_enc, x_dec, x_rec
 
-# GeM pool: https://arxiv.org/pdf/1711.02512.pdf
-# https://github.com/filipradenovic/cnnimageretrieval-pytorch/tree/6d4ce7854198f132176965761a3dc26fffaf66c5
-# https://github.com/damo-cv/TransReID-SSL/blob/fc39e88240aa7cb7b28dd2097e7f161ae2be3ad8/transreid_pytorch/model/backbones/vit_pytorch.py
-class GeneralizedMeanPooling(nn.Module):
-    def __init__(self, p=3, eps=1e-6):
-        super(GeneralizedMeanPooling, self).__init__()
-        self.p   = nn.Parameter(torch.ones(1)*p)
-        self.eps = eps
+class Multi_Task_Discriminator_Skip(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        # Enc
+        self.conv11    = nn.utils.spectral_norm(torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.relu11    = nn.LeakyReLU(0.2)
+        self.conv12    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.relu12    = nn.LeakyReLU(0.2)        
+        self.down1     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1))
 
-    def gem(self, x, p=3, eps=1e-6):
-        return F.adaptive_avg_pool2d(input=x.clamp(min=eps).pow(p), output_size=1).pow(1./p)
+        self.conv21    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.relu21    = nn.LeakyReLU(0.2)
+        self.conv22    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.relu22    = nn.LeakyReLU(0.2)
+        self.down2     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=4, stride=2, padding=1))
 
-    def forward(self, x):
-        return self.gem(x, p=self.p, eps=self.eps)
+        self.conv31    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu31    = nn.LeakyReLU(0.2)
+        self.conv32    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.relu32    = nn.LeakyReLU(0.2)
+        self.down3     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=4, stride=2, padding=1))
+
+        self.conv41    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu41    = nn.LeakyReLU(0.2)
+        self.conv42    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu42    = nn.LeakyReLU(0.2)
+        self.down4     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        self.conv51    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu51    = nn.LeakyReLU(0.2)
+        self.conv52    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu52    = nn.LeakyReLU(0.2)
+        self.down5     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+        
+        self.conv61    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu61    = nn.LeakyReLU(0.2)
+        self.conv62    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.relu62    = nn.LeakyReLU(0.2)
+        self.down6     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
+
+        # Bot --> 이미 input이 1x1이기에 kernel_size를 1로 하는게 더 좋을듯 하다....
+        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.brelu    = nn.LeakyReLU(0.2)                
+        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.brelu    = nn.LeakyReLU(0.2)                
+
+        # SEG Dec
+        self.s_up1       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.s_dconv11   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.s_drelu11   = nn.LeakyReLU(0.2)                
+        self.s_dconv12   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.s_drelu12   = nn.LeakyReLU(0.2)        
+
+        self.s_up2       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.s_dconv21   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.s_drelu21   = nn.LeakyReLU(0.2)                
+        self.s_dconv22   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.s_drelu22   = nn.LeakyReLU(0.2)        
+
+        self.s_up3       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.s_dconv31   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.s_drelu31   = nn.LeakyReLU(0.2)                
+        self.s_dconv32   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.s_drelu32   = nn.LeakyReLU(0.2)        
+
+        self.s_up4       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.s_dconv41   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.s_drelu41   = nn.LeakyReLU(0.2)                
+        self.s_dconv42   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.s_drelu42   = nn.LeakyReLU(0.2)        
+
+        self.s_up5       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.s_dconv51   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2*2, out_channels, kernel_size=3, stride=1, padding=1))
+        self.s_drelu51   = nn.LeakyReLU(0.2)                
+        self.s_dconv52   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.s_drelu52   = nn.LeakyReLU(0.2)    
+
+        self.s_up6       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.s_dconv61   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, 1, kernel_size=3, stride=1, padding=1))
+        self.s_drelu61   = nn.LeakyReLU(0.2)                
+        self.s_dconv62   = nn.utils.spectral_norm(torch.nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1))
+        self.s_drelu62   = nn.LeakyReLU(0.2)    
+
+        # REC Dec
+        self.r_up1       = UpsampleBlock(scale=2, input_channels=out_channels*8, output_channels=out_channels*8)
+        self.r_dconv11   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.r_drelu11   = nn.LeakyReLU(0.2)                
+        self.r_dconv12   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.r_drelu12   = nn.LeakyReLU(0.2)        
+
+        self.r_up2       = UpsampleBlock(scale=2, input_channels=out_channels*8, output_channels=out_channels*8)
+        self.r_dconv21   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.r_drelu21   = nn.LeakyReLU(0.2)                
+        self.r_dconv22   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
+        self.r_drelu22   = nn.LeakyReLU(0.2)        
+
+        self.r_up3       = UpsampleBlock(scale=2, input_channels=out_channels*8, output_channels=out_channels*8)
+        self.r_dconv31   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.r_drelu31   = nn.LeakyReLU(0.2)                
+        self.r_dconv32   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
+        self.r_drelu32   = nn.LeakyReLU(0.2)        
+
+        self.r_up4       = UpsampleBlock(scale=2, input_channels=out_channels*4, output_channels=out_channels*4)
+        self.r_dconv41   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.r_drelu41   = nn.LeakyReLU(0.2)                
+        self.r_dconv42   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
+        self.r_drelu42   = nn.LeakyReLU(0.2)        
+
+        self.r_up5       = UpsampleBlock(scale=2, input_channels=out_channels*2, output_channels=out_channels*2)
+        self.r_dconv51   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2*2, out_channels, kernel_size=3, stride=1, padding=1))
+        self.r_drelu51   = nn.LeakyReLU(0.2)                
+        self.r_dconv52   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+        self.r_drelu52   = nn.LeakyReLU(0.2)    
+
+        self.r_up6       = UpsampleBlock(scale=2, input_channels=out_channels, output_channels=out_channels)
+        self.r_dconv61   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, 1, kernel_size=3, stride=1, padding=1))
+        self.r_drelu61   = nn.LeakyReLU(0.2)                
+        self.r_dconv62   = nn.utils.spectral_norm(torch.nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1))
+        self.r_drelu62   = nn.LeakyReLU(0.2)  
+
+        # Heads
+        self.enc_out   = nn.Sequential(nn.Flatten(), nn.Dropout(p=0.3), nn.Linear(512, 1))
+        self.dec_out   = nn.Conv2d(in_channels, 1, 1)
+        self.rec_out   = nn.Conv2d(in_channels, 1, 1)
+        
+        self.__init_weights()
+
+    def __init_weights(self):
+        for m in self.modules():
+            if type(m) in {nn.Conv2d, nn.Linear}:                
+                m.weight.data.normal_(0, 0.01)
+                if hasattr(m.bias, 'data'):
+                    m.bias.data.fill_(0)
+
+    def forward(self, input):
+        # Encoder
+        x = self.relu11(self.conv11(input))
+        x1 = self.relu12(self.conv12(x))
+        x = self.down1(x1)
+        
+        x = self.relu21(self.conv21(x))
+        x2 = self.relu22(self.conv22(x))
+        x = self.down2(x2)
+        
+        x = self.relu31(self.conv31(x))
+        x3 = self.relu32(self.conv32(x))
+        x = self.down3(x3)
+        
+        x = self.relu41(self.conv41(x))
+        x4 = self.relu42(self.conv42(x))
+        x = self.down4(x4)
+        
+        x = self.relu51(self.conv51(x))
+        x5 = self.relu52(self.conv52(x))
+        x = self.down5(x5)
+        
+        x = self.relu61(self.conv51(x))
+        x6 = self.relu62(self.conv52(x))
+        x = self.down6(x6)
+        
+        # Bottleneck
+        x = self.brelu(self.bconv(x))
+        x_bot = self.brelu(self.bconv(x))                
+        
+        # SEG Decoder
+        x = self.s_up1(x_bot)
+        x = self.s_drelu11(self.s_dconv11(torch.cat([x, x6], dim=1)))
+        x = self.s_drelu12(self.s_dconv12(x))                
+
+        x = self.s_up2(x)
+        x = self.s_drelu21(self.s_dconv21(torch.cat([x, x5], dim=1)))
+        x = self.s_drelu22(self.s_dconv22(x))              
+
+        x = self.s_up3(x)
+        x = self.s_drelu31(self.s_dconv31(torch.cat([x, x4], dim=1)))
+        x = self.s_drelu32(self.s_dconv32(x))              
+
+        x = self.s_up4(x)
+        x = self.s_drelu41(self.s_dconv41(torch.cat([x, x3], dim=1)))
+        x = self.s_drelu42(self.s_dconv42(x))              
+
+        x = self.s_up5(x)
+        x = self.s_drelu51(self.s_dconv51(torch.cat([x, x2], dim=1)))
+        x = self.s_drelu52(self.s_dconv52(x))              
+
+        x = self.s_up6(x)
+        x = self.s_drelu61(self.s_dconv61(torch.cat([x, x1], dim=1)))
+        seg_out = self.s_drelu62(self.s_dconv62(x))              
+
+        # REC Decoder
+        x = self.r_up1(x_bot)
+        x = self.r_drelu11(self.r_dconv11(torch.cat([x, x6], dim=1)))
+        x = self.r_drelu12(self.r_dconv12(x))                
+
+        x = self.r_up2(x)
+        x = self.r_drelu21(self.r_dconv21(torch.cat([x, x5], dim=1)))
+        x = self.r_drelu22(self.r_dconv22(x))              
+
+        x = self.r_up3(x)
+        x = self.r_drelu31(self.r_dconv31(torch.cat([x, x4], dim=1)))
+        x = self.r_drelu32(self.r_dconv32(x))              
+
+        x = self.r_up4(x)
+        x = self.r_drelu41(self.r_dconv41(torch.cat([x, x3], dim=1)))
+        x = self.r_drelu42(self.r_dconv42(x))              
+
+        x = self.r_up5(x)
+        x = self.r_drelu51(self.r_dconv51(torch.cat([x, x2], dim=1)))
+        x = self.r_drelu52(self.r_dconv52(x))              
+        
+        x = self.r_up6(x)
+        x = self.r_drelu61(self.r_dconv61(torch.cat([x, x1], dim=1)))
+        rec_out = self.r_drelu62(self.r_dconv62(x))       
+
+        # Heads
+        x_enc = self.enc_out(x_bot)   # enc에 FC 1 layer 더 있어야 편해질듯...?
+        x_dec = self.dec_out(seg_out)
+        x_rec = self.rec_out(rec_out)
+
+        return x_enc, x_dec, x_rec
+
     
 class MTD_GAN(nn.Module):
     def __init__(self):
         super(MTD_GAN, self).__init__()
         # Generator
-        # self.Generator       = FFT_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-        self.Generator       = FFT_Generator_A(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-        # self.Generator       = FFT_Generator_B(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-        # self.Generator       = FFT_Generator_C(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
+        self.Generator       = FFT_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
 
         # Discriminator
-        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
-
-        # LOSS
-        # self.gan_metric    = nn.BCEWithLogitsLoss()
-        self.gan_metric_cls  = ls_gan
-        # self.gan_metric_seg  = ls_gan_with_weight
-        self.gan_metric_seg  = ls_gan_with_weight_upgrade
+        self.Discriminator   = Multi_Task_Discriminator_Skip(in_channels=1, out_channels=64)
         
-        self.pixel_loss     = CharbonnierLoss()
-        self.edge_loss      = EdgeLoss()
-
-    def d_loss(self, x, y):
-        fake                             = self.Generator(x).detach()   
-        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-        
-        # disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + 30.0*self.gan_metric_seg(real_dec, 1., x-y) + 30.0*self.gan_metric_seg(fake_dec, 0., x-y)
-        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
-        rec_loss     = F.l1_loss(real_rec, y)
-        
-        # MSE
-        consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1)) * torch.abs(x-y).sum().bool()
-        consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1)) * torch.abs(x-y).sum().bool()
-        
-        # Cosine (Ref: https://github.com/pytorch/pytorch/issues/8316)
-        # consist_loss_real = F.cosine_embedding_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1), torch.ones(real_enc.shape[0]).cuda()) 
-        # consist_loss_fake = F.cosine_embedding_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1), torch.ones(fake_enc.shape[0]).cuda())
-        
-        consist_loss = consist_loss_real + consist_loss_fake
-        
-        print("D / real_enc == ", real_enc.max())
-        print("D / fake_enc == ", fake_enc.max())
-
-        total_loss   = disc_loss + rec_loss + consist_loss
-        loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-                        'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-                        'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-                        'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-                        'D/REC_loss': F.l1_loss(real_rec, y),
-                        'D/consist_loss_real': consist_loss_real,
-                        'D/consist_loss_fake': consist_loss_fake}
-        
-        return total_loss, loss_details
-        # return [disc_loss, rec_loss, consist_loss], loss_details
-
-
-    def g_loss(self, x, y):
-        fake                    = self.Generator(x)
-        gen_enc, gen_dec, _     = self.Discriminator(fake)
-
-        
-        # adv_loss     = self.gan_metric_cls(gen_enc, 1.) + 30.0*self.gan_metric_seg(gen_dec, 1., x-y)
-        adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
-        pix_loss     = 50.0*self.pixel_loss(fake, y)
-        edge_loss    = 50.0*self.edge_loss(fake, y)
-
-        print("G / real_enc == ", gen_enc.max())
-
-        total_loss   = adv_loss + pix_loss + edge_loss
-        loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
-                        'G/gen_dec': self.gan_metric_seg(gen_dec, 1., x-y), 
-                        'G/pix_loss': pix_loss,
-                        'G/edge_loss': edge_loss}
-                        
-
-        return total_loss, loss_details
-        # return [adv_loss, pix_loss, edge_loss], loss_details
-
-# NEW
-import random
-
-class MTD_GAN_V2(nn.Module):
-    def __init__(self):
-        super(MTD_GAN_V2, self).__init__()
-        # Generator
-        self.Generator       = FFT_Generator_A(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-
-        # Discriminator
-        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
-
-        # LOSS
-        self.gan_metric_cls  = ls_gan
-        self.gan_metric_seg  = ls_gan_with_weight_upgrade
-        
-        self.pixel_loss     = CharbonnierLoss()
-        self.edge_loss      = EdgeLoss()
-        self.index = 0
-
-    def d_loss(self, x, y):
-        fake                             = self.Generator(x).detach()   
-        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-        
-        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
-        rec_loss     = F.l1_loss(real_rec, y)
-        
-        if self.index >= 86200:
-            number       = round(random.random()*10000)
-            np.save('/workspace/sunggu/4.Dose_img2img/samples/real_enc'+str(number)+'.npy', real_enc.cpu().detach().numpy())
-            np.save('/workspace/sunggu/4.Dose_img2img/samples/real_dec'+str(number)+'.npy', real_dec.cpu().detach().numpy())
-            np.save('/workspace/sunggu/4.Dose_img2img/samples/real_rec'+str(number)+'.npy', real_rec.cpu().detach().numpy())
-            np.save('/workspace/sunggu/4.Dose_img2img/samples/fake_enc'+str(number)+'.npy', fake_enc.cpu().detach().numpy())
-            np.save('/workspace/sunggu/4.Dose_img2img/samples/fake_dec'+str(number)+'.npy', fake_dec.cpu().detach().numpy())
-        self.index += 1
-
-        print("D / real_enc == ", real_enc.max())
-        print("D / fake_enc == ", fake_enc.max())
-
-        total_loss   = disc_loss + rec_loss
-        loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-                        'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-                        'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-                        'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-                        'D/REC_loss': F.l1_loss(real_rec, y)}
-        
-        return total_loss, loss_details
-        # return [disc_loss, rec_loss], loss_details
-
-
-    def g_loss(self, x, y):
-        fake                    = self.Generator(x)
-        gen_enc, gen_dec, _     = self.Discriminator(fake)
-
-        adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
-        pix_loss     = 50.0*self.pixel_loss(fake, y)
-        edge_loss    = 50.0*self.edge_loss(fake, y)
-
-        print("G / real_enc == ", gen_enc.max())
-
-        total_loss   = adv_loss + pix_loss + edge_loss
-        loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
-                        'G/gen_dec': self.gan_metric_seg(gen_dec, 1., x-y), 
-                        'G/pix_loss': pix_loss,
-                        'G/edge_loss': edge_loss}
-                        
-
-        return total_loss, loss_details
-        # return [adv_loss, pix_loss, edge_loss], loss_details
-
-
-
-
-
-# NEW
-class MTD_GAN_V3(nn.Module):
-    def __init__(self):
-        super(MTD_GAN_V3, self).__init__()
-        # Generator
-        self.Generator       = FFT_Generator_A(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-
-        # Discriminator
-        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
 
         # LOSS
         self.gan_metric_cls  = ls_gan
@@ -1993,62 +1751,28 @@ class MTD_GAN_V3(nn.Module):
         self.pixel_loss     = CharbonnierLoss()
         self.edge_loss      = EdgeLoss()
 
-    # def d_loss(self, x, y):
-    #     fake                             = self.Generator(x).detach()   
-    #     real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-    #     fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
-    
-    #     disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
-        
-    #     rec_loss_real     = F.l1_loss(real_rec, y) 
-    #     rec_loss_fake     = F.l1_loss(fake_rec, fake) 
-    #     rec_loss          = rec_loss_real + rec_loss_fake
-
-    #     # Consistency
-    #     rec_real_enc,  rec_real_dec,  _   = self.Discriminator(real_rec.clip(0, 1))
-    #     rec_fake_enc,  rec_fake_dec,  _   = self.Discriminator(fake_rec.clip(0, 1))
-
-    #     consist_loss_real_enc = F.mse_loss(real_enc, rec_real_enc) 
-    #     consist_loss_real_dec = F.mse_loss(real_dec, rec_real_dec)
-    #     consist_loss_fake_enc = F.mse_loss(fake_enc, rec_fake_enc) 
-    #     consist_loss_fake_dec = F.mse_loss(fake_dec, rec_fake_dec)
-
-    #     consist_loss = consist_loss_real_enc + consist_loss_real_dec + consist_loss_fake_enc + consist_loss_fake_dec
-    #     print("D / real_enc == ", real_enc.max())
-    #     print("D / fake_enc == ", fake_enc.max())
-
-    #     total_loss   = disc_loss + rec_loss + consist_loss
-    #     loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-    #                     'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-    #                     'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-    #                     'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-    #                     'D/rec_loss_real': rec_loss_real,
-    #                     'D/rec_loss_fake': rec_loss_fake,
-    #                     'D/consist_loss_real_enc': consist_loss_real_enc,
-    #                     'D/consist_loss_real_dec': consist_loss_real_dec,
-    #                     'D/consist_loss_fake_enc': consist_loss_fake_enc,
-    #                     'D/consist_loss_fake_dec': consist_loss_fake_dec}     
-
-    #     # return [disc_loss, rec_loss, consist_loss], loss_details                 
-    #     return total_loss, loss_details
-        
+    # Both REC
     def d_loss(self, x, y):
         fake                             = self.Generator(x).detach()   
         real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
+        fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
     
         disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
         
         rec_loss_real     = F.l1_loss(real_rec, y) 
-        rec_loss          = rec_loss_real
+        rec_loss_fake     = F.l1_loss(fake_rec, fake) 
+        rec_loss          = rec_loss_real + rec_loss_fake
 
         # Consistency
         rec_real_enc,  rec_real_dec,  _   = self.Discriminator(real_rec.clip(0, 1))
+        rec_fake_enc,  rec_fake_dec,  _   = self.Discriminator(fake_rec.clip(0, 1))
 
         consist_loss_real_enc = F.mse_loss(real_enc, rec_real_enc) 
         consist_loss_real_dec = F.mse_loss(real_dec, rec_real_dec)
+        consist_loss_fake_enc = F.mse_loss(fake_enc, rec_fake_enc) 
+        consist_loss_fake_dec = F.mse_loss(fake_dec, rec_fake_dec)
 
-        consist_loss = consist_loss_real_enc + consist_loss_real_dec
+        consist_loss = consist_loss_real_enc + consist_loss_real_dec + consist_loss_fake_enc + consist_loss_fake_dec
         print("D / real_enc == ", real_enc.max())
         print("D / fake_enc == ", fake_enc.max())
 
@@ -2058,12 +1782,15 @@ class MTD_GAN_V3(nn.Module):
                         'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
                         'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
                         'D/rec_loss_real': rec_loss_real,
+                        'D/rec_loss_fake': rec_loss_fake,
                         'D/consist_loss_real_enc': consist_loss_real_enc,
-                        'D/consist_loss_real_dec': consist_loss_real_dec}     
+                        'D/consist_loss_real_dec': consist_loss_real_dec,
+                        'D/consist_loss_fake_enc': consist_loss_fake_enc,
+                        'D/consist_loss_fake_dec': consist_loss_fake_dec}     
 
         return [disc_loss, rec_loss, consist_loss], loss_details                 
         # return total_loss, loss_details
-
+    
     def g_loss(self, x, y):
         fake                    = self.Generator(x)
         gen_enc, gen_dec, _     = self.Discriminator(fake)
@@ -2089,35 +1816,6 @@ class MTD_GAN_V3(nn.Module):
 
 
 # Ablation_A - CLS Discriminator
-class REDCNN_Generator(nn.Module):
-    def __init__(self, in_channels=1, out_channels=96, num_layers=10, kernel_size=5, padding=0):
-        super(REDCNN_Generator, self).__init__()
-        encoder = [nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)]
-        decoder = [nn.ConvTranspose2d(out_channels, in_channels, kernel_size=kernel_size, stride=1, padding=padding)]
-        for _ in range(num_layers):
-            encoder.append(nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
-            decoder.append(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding))
-        self.encoder = nn.ModuleList(encoder)
-        self.decoder = nn.ModuleList(decoder)
-        self.__init_weights()
-
-    def __init_weights(self):
-        for m in self.modules():
-            classname = m.__class__.__name__
-            if classname.find('Conv') != -1:
-                m.weight.data.normal_(0, 0.01)
-                if hasattr(m.bias, 'data'):
-                    m.bias.data.fill_(0)
-
-    def forward(self, x: torch.Tensor):
-        residuals = []
-        for block in self.encoder:
-            residuals.append(x)
-            x = F.relu(block(x))
-        for residual, block in zip(residuals[::-1], self.decoder[::-1]):
-            x = F.relu(block(x) + residual)
-        return x
-
 class CLS_Discriminator(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -2481,238 +2179,7 @@ class Ablation_B(nn.Module):
 
         return total_loss, loss_details
 
-# Ablation_C - MTL_D_GAN
-class CLS_SEG_REC_Discriminator(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        # Enc
-        self.conv11    = nn.utils.spectral_norm(torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1))
-        self.relu11    = nn.LeakyReLU(0.2)
-        self.conv12    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
-        self.relu12    = nn.LeakyReLU(0.2)        
-        self.down1     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1))
-
-        self.conv21    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels*2, kernel_size=3, stride=1, padding=1))
-        self.relu21    = nn.LeakyReLU(0.2)
-        self.conv22    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
-        self.relu22    = nn.LeakyReLU(0.2)
-        self.down2     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=4, stride=2, padding=1))
-
-        self.conv31    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*4, kernel_size=3, stride=1, padding=1))
-        self.relu31    = nn.LeakyReLU(0.2)
-        self.conv32    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
-        self.relu32    = nn.LeakyReLU(0.2)
-        self.down3     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=4, stride=2, padding=1))
-
-        self.conv41    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.relu41    = nn.LeakyReLU(0.2)
-        self.conv42    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.relu42    = nn.LeakyReLU(0.2)
-        self.down4     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
-
-        self.conv51    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.relu51    = nn.LeakyReLU(0.2)
-        self.conv52    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.relu52    = nn.LeakyReLU(0.2)
-        self.down5     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
-        
-        self.conv61    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.relu61    = nn.LeakyReLU(0.2)
-        self.conv62    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.relu62    = nn.LeakyReLU(0.2)
-        self.down6     = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=4, stride=2, padding=1))
-
-        # Bot
-        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.brelu    = nn.LeakyReLU(0.2)                
-        self.bconv    = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.brelu    = nn.LeakyReLU(0.2)                
-
-        # SEG Dec
-        self.up1       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.dconv11   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.drelu11   = nn.LeakyReLU(0.2)                
-        self.dconv12   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.drelu12   = nn.LeakyReLU(0.2)        
-
-        self.up2       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.dconv21   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.drelu21   = nn.LeakyReLU(0.2)                
-        self.dconv22   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.drelu22   = nn.LeakyReLU(0.2)        
-
-        self.up3       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.dconv31   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8*2, out_channels*4, kernel_size=3, stride=1, padding=1))
-        self.drelu31   = nn.LeakyReLU(0.2)                
-        self.dconv32   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
-        self.drelu32   = nn.LeakyReLU(0.2)        
-
-        self.up4       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.dconv41   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4*2, out_channels*2, kernel_size=3, stride=1, padding=1))
-        self.drelu41   = nn.LeakyReLU(0.2)                
-        self.dconv42   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
-        self.drelu42   = nn.LeakyReLU(0.2)        
-
-        self.up5       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.dconv51   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2*2, out_channels, kernel_size=3, stride=1, padding=1))
-        self.drelu51   = nn.LeakyReLU(0.2)                
-        self.dconv52   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
-        self.drelu52   = nn.LeakyReLU(0.2)    
-
-        self.up6       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.dconv61   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, 1, kernel_size=3, stride=1, padding=1))
-        self.drelu61   = nn.LeakyReLU(0.2)                
-        self.dconv62   = nn.utils.spectral_norm(torch.nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1))
-        self.drelu62   = nn.LeakyReLU(0.2)    
-
-        # REC Dec
-        self.r_up1       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.r_dconv11   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.r_drelu11   = nn.LeakyReLU(0.2)                
-        self.r_dconv12   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.r_drelu12   = nn.LeakyReLU(0.2)        
-
-        self.r_up2       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.r_dconv21   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.r_drelu21   = nn.LeakyReLU(0.2)                
-        self.r_dconv22   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*8, kernel_size=3, stride=1, padding=1))
-        self.r_drelu22   = nn.LeakyReLU(0.2)        
-
-        self.r_up3       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.r_dconv31   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*8, out_channels*4, kernel_size=3, stride=1, padding=1))
-        self.r_drelu31   = nn.LeakyReLU(0.2)                
-        self.r_dconv32   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*4, kernel_size=3, stride=1, padding=1))
-        self.r_drelu32   = nn.LeakyReLU(0.2)        
-
-        self.r_up4       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.r_dconv41   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*4, out_channels*2, kernel_size=3, stride=1, padding=1))
-        self.r_drelu41   = nn.LeakyReLU(0.2)                
-        self.r_dconv42   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels*2, kernel_size=3, stride=1, padding=1))
-        self.r_drelu42   = nn.LeakyReLU(0.2)        
-
-        self.r_up5       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.r_dconv51   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels*2, out_channels, kernel_size=3, stride=1, padding=1))
-        self.r_drelu51   = nn.LeakyReLU(0.2)                
-        self.r_dconv52   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
-        self.r_drelu52   = nn.LeakyReLU(0.2)    
-
-        self.r_up6       = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.r_dconv61   = nn.utils.spectral_norm(torch.nn.Conv2d(out_channels, 1, kernel_size=3, stride=1, padding=1))
-        self.r_drelu61   = nn.LeakyReLU(0.2)                
-        self.r_dconv62   = nn.utils.spectral_norm(torch.nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=1))
-        self.r_drelu62   = nn.LeakyReLU(0.2)  
-
-        # Heads
-        self.enc_out   = nn.Sequential(nn.Flatten(), nn.Dropout(p=0.3), nn.Linear(512, 1))
-        self.dec_out   = nn.Conv2d(in_channels, 1, 1)
-        self.rec_out   = nn.Conv2d(in_channels, 1, 1)
-        
-        self.__init_weights()
-
-    def __init_weights(self):
-        for m in self.modules():
-            if type(m) in {nn.Conv2d, nn.Linear}:                
-                m.weight.data.normal_(0, 0.01)
-                if hasattr(m.bias, 'data'):
-                    m.bias.data.fill_(0)
-
-    def forward(self, input):
-        # Encoder
-        x = self.relu11(self.conv11(input))
-        x1 = self.relu12(self.conv12(x))
-        x = self.down1(x1)
-        
-        x = self.relu21(self.conv21(x))
-        x2 = self.relu22(self.conv22(x))
-        x = self.down2(x2)
-        
-        x = self.relu31(self.conv31(x))
-        x3 = self.relu32(self.conv32(x))
-        x = self.down3(x3)
-        
-        x = self.relu41(self.conv41(x))
-        x4 = self.relu42(self.conv42(x))
-        x = self.down4(x4)
-        
-        x = self.relu51(self.conv51(x))
-        x5 = self.relu52(self.conv52(x))
-        x = self.down5(x5)
-        
-        x = self.relu61(self.conv51(x))
-        x6 = self.relu62(self.conv52(x))
-        x = self.down6(x6)
-        
-        # Bot
-        x = self.brelu(self.bconv(x))
-        x_bot = self.brelu(self.bconv(x))                
-        
-        # SEG Decoder
-        x = self.up1(x_bot)
-        x = self.drelu11(self.dconv11(torch.cat([x, x6], dim=1)))
-        x = self.drelu12(self.dconv12(x))                
-        
-
-        x = self.up2(x)
-        x = self.drelu21(self.dconv21(torch.cat([x, x5], dim=1)))
-        x = self.drelu22(self.dconv22(x))              
-        
-
-        x = self.up3(x)
-        x = self.drelu31(self.dconv31(torch.cat([x, x4], dim=1)))
-        x = self.drelu32(self.dconv32(x))              
-        
-
-        x = self.up4(x)
-        x = self.drelu41(self.dconv41(torch.cat([x, x3], dim=1)))
-        x = self.drelu42(self.dconv42(x))              
-        
-
-        x = self.up5(x)
-        x = self.drelu51(self.dconv51(torch.cat([x, x2], dim=1)))
-        x = self.drelu52(self.dconv52(x))              
-        
-
-        x = self.up6(x)
-        x = self.drelu61(self.dconv61(torch.cat([x, x1], dim=1)))
-        seg_out = self.drelu62(self.dconv62(x))              
-
-        # REC Decoder
-        x = self.r_up1(x_bot)
-        x = self.r_drelu11(self.r_dconv11(x))
-        x = self.r_drelu12(self.r_dconv12(x))                
-        
-
-        x = self.r_up2(x)
-        x = self.r_drelu21(self.r_dconv21(x))
-        x = self.r_drelu22(self.r_dconv22(x))              
-        
-
-        x = self.r_up3(x)
-        x = self.r_drelu31(self.r_dconv31(x))
-        x = self.r_drelu32(self.r_dconv32(x))              
-        
-
-        x = self.r_up4(x)
-        x = self.r_drelu41(self.r_dconv41(x))
-        x = self.r_drelu42(self.r_dconv42(x))              
-        
-
-        x = self.r_up5(x)
-        x = self.r_drelu51(self.r_dconv51(x))
-        x = self.r_drelu52(self.r_dconv52(x))              
-        
-
-        x = self.r_up6(x)
-        x = self.r_drelu61(self.r_dconv61(x))
-        rec_out = self.r_drelu62(self.r_dconv62(x))       
-
-        # Heads
-        x_enc = self.enc_out(x_bot) 
-        x_dec = self.dec_out(seg_out)
-        x_rec = self.rec_out(rec_out)
-
-        return x_enc, x_dec, x_rec
-
+# Ablation_C - MTL_D_GAN (CLS, SEG, and REC Discriminator)
 class Ablation_C(nn.Module):
     def __init__(self):
         super(Ablation_C, self).__init__()
@@ -2720,7 +2187,8 @@ class Ablation_C(nn.Module):
         self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
 
         # Discriminator
-        self.Discriminator   = CLS_SEG_REC_Discriminator(in_channels=1, out_channels=64)
+        # self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
+        self.Discriminator   = Multi_Task_Discriminator_Skip(in_channels=1, out_channels=64)
 
         # LOSS
         self.gan_metric      = ls_gan
@@ -2732,13 +2200,12 @@ class Ablation_C(nn.Module):
         fake                             = self.Generator(x).detach()   
         real_enc,  real_dec,  real_rec   = self.Discriminator(y)
         fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
-        # fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-        
         
         disc_loss = self.gan_metric(real_enc, 1.) + self.gan_metric(real_dec, 1.) + self.gan_metric(fake_enc, 0.) + self.gan_metric(fake_dec, 0.)
 
-        # rec_loss  = F.l1_loss(real_rec, y)
-        rec_loss  = F.l1_loss(real_rec, y) + F.l1_loss(fake_rec, fake)
+        rec_loss_real     = F.l1_loss(real_rec, y) 
+        rec_loss_fake     = F.l1_loss(fake_rec, fake) 
+        rec_loss          = rec_loss_real + rec_loss_fake
 
         print("D / real_enc == ", real_enc.max())
         print("D / fake_enc == ", fake_enc.max())
@@ -2748,220 +2215,9 @@ class Ablation_C(nn.Module):
                         'D/fake_enc': self.gan_metric(fake_enc, 0.), 
                         'D/real_dec': self.gan_metric(real_dec, 1.),
                         'D/fake_dec': self.gan_metric(fake_dec, 0.),
-                        'D/REC_loss': F.l1_loss(real_rec, y)}
+                        'D/rec_loss_real': rec_loss_real,
+                        'D/rec_loss_fake': rec_loss_fake}
         
-        return total_loss, loss_details
-
-
-    def g_loss(self, x, y):
-        fake                    = self.Generator(x)
-        gen_enc, gen_dec, _     = self.Discriminator(fake)
-
-        
-        gen_loss     = self.gan_metric(gen_enc, 1.) + self.gan_metric(gen_dec, 1.)
-        
-
-        adv_loss     = gen_loss
-        pix_loss     = 50.0*self.pixel_loss(fake, y)
-        edge_loss    = 50.0*self.edge_loss(fake, y)
-
-        print("G / real_enc == ", gen_enc.max())
-
-        total_loss   = adv_loss + pix_loss + edge_loss
-        loss_details = {'G/gen_enc': self.gan_metric(gen_enc, 1.), 
-                        'G/gen_dec': self.gan_metric(gen_dec, 1.), 
-                        'G/pix_loss': pix_loss,
-                        'G/edge_loss': edge_loss}
-                        
-
-        return total_loss, loss_details
-
-# Ablation_D - MTL_D_GAN + Seg weight
-class Ablation_D(nn.Module):
-    def __init__(self):
-        super(Ablation_D, self).__init__()
-        # Generator
-        self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-
-        # Discriminator
-        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
-
-        # LOSS
-        self.gan_metric_cls  = ls_gan
-        # self.gan_metric_seg  = ls_gan_with_weight
-        self.gan_metric_seg  = ls_gan_with_weight_upgrade
-        
-        self.pixel_loss     = CharbonnierLoss()
-        self.edge_loss      = EdgeLoss()
-
-    def d_loss(self, x, y):
-        fake                             = self.Generator(x).detach()   
-        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-
-        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
-        rec_loss     = F.l1_loss(real_rec, y)
-        
-        print("D / real_enc == ", real_enc.max())
-        print("D / fake_enc == ", fake_enc.max())
-
-        # total_loss   = disc_loss + rec_loss
-        loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-                        'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-                        'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-                        'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-                        'D/REC_loss': F.l1_loss(real_rec, y)}
-        
-        # return total_loss, loss_details
-        return [disc_loss, rec_loss], loss_details
-
-
-    def g_loss(self, x, y):
-        fake                    = self.Generator(x)
-        gen_enc, gen_dec, _     = self.Discriminator(fake)
-
-        gen_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
-        
-        adv_loss     = gen_loss
-        pix_loss     = 50.0*self.pixel_loss(fake, y)
-        edge_loss    = 50.0*self.edge_loss(fake, y)
-
-        print("G / real_enc == ", gen_enc.max())
-
-        # total_loss   = adv_loss + pix_loss + edge_loss
-        loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
-                        'G/gen_dec': self.gan_metric_seg(gen_dec, 1., x-y), 
-                        'G/pix_loss': pix_loss,
-                        'G/edge_loss': edge_loss}
-                        
-        # return total_loss, loss_details
-        return [adv_loss, pix_loss, edge_loss], loss_details
-
-### Below are Fails....
-
-# Ablation_E - MTL_D_GAN + Seg weight + Consistency loss
-class Ablation_E(nn.Module):
-    def __init__(self):
-        super(Ablation_E, self).__init__()
-        # Generator
-        self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-
-        # Discriminator
-        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
-
-        # LOSS
-        self.gan_metric_cls  = ls_gan
-        # self.gan_metric_seg  = ls_gan_with_weight
-        self.gan_metric_seg  = ls_gan_with_weight_upgrade
-        
-        self.pixel_loss     = CharbonnierLoss()
-        self.edge_loss      = EdgeLoss()
-
-    def d_loss(self, x, y):
-        fake                             = self.Generator(x).detach()   
-        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-    
-        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
-        rec_loss     = F.l1_loss(real_rec, y) 
-        
-        # MSE
-            # GeM
-        # consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1)) * torch.abs(x-y).sum().bool()
-        # consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1)) * torch.abs(x-y).sum().bool()
-
-            # Avg
-        # consist_loss_real = F.mse_loss(real_enc, F.adaptive_avg_pool2d(real_dec, output_size=1).flatten(1)) * torch.abs(x-y).sum().bool()
-        # consist_loss_fake = F.mse_loss(fake_enc, F.adaptive_avg_pool2d(fake_dec, output_size=1).flatten(1)) * torch.abs(x-y).sum().bool()        
-
-            # Max
-        consist_loss_real = F.mse_loss(real_enc, F.adaptive_max_pool2d(real_dec, output_size=1).flatten(1)) * torch.abs(x-y).sum().bool()
-        consist_loss_fake = F.mse_loss(fake_enc, F.adaptive_max_pool2d(fake_dec, output_size=1).flatten(1)) * torch.abs(x-y).sum().bool()        
-
-        # Cosine
-        # consist_loss_real = F.cosine_embedding_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1), torch.ones(real_enc.shape[0]).cuda()) 
-        # consist_loss_fake = F.cosine_embedding_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1), torch.ones(fake_enc.shape[0]).cuda())
-
-        consist_loss = consist_loss_real + consist_loss_fake      
-
-        print("D / real_enc == ", real_enc.max())
-        print("D / fake_enc == ", fake_enc.max())
-
-        total_loss   = disc_loss + rec_loss + consist_loss
-        loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-                        'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-                        'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-                        'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-                        'D/REC_loss': F.l1_loss(real_rec, y),
-                        'D/consist_loss_real': consist_loss_real,
-                        'D/consist_loss_fake': consist_loss_fake}     
-
-        # return [disc_loss, rec_loss, consist_loss], loss_details                 
-        return total_loss, loss_details
-        
-
-
-    def g_loss(self, x, y):
-        fake                    = self.Generator(x)
-        gen_enc, gen_dec, _     = self.Discriminator(fake)
-        
-        adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
-        pix_loss     = 50.0*self.pixel_loss(fake, y)
-        edge_loss    = 50.0*self.edge_loss(fake, y)
-
-        print("G / real_enc == ", gen_enc.max())
-
-        total_loss   = adv_loss + pix_loss + edge_loss
-        loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
-                        'G/gen_dec': self.gan_metric_seg(gen_dec, 1., x-y), 
-                        'G/pix_loss': pix_loss,
-                        'G/edge_loss': edge_loss}
-                        
-        # return [adv_loss, pix_loss, edge_loss], loss_details
-        return total_loss, loss_details
-        
-# Ablation_F - MTL_D_GAN + Consistency loss
-class Ablation_F(nn.Module):
-    def __init__(self):
-        super(Ablation_F, self).__init__()
-        # Generator
-        self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
-
-        # Discriminator
-        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
-
-        # LOSS
-        self.gan_metric  = ls_gan
-        
-        self.pixel_loss     = CharbonnierLoss()
-        self.edge_loss      = EdgeLoss()
-
-    def d_loss(self, x, y):
-        fake                             = self.Generator(x).detach()   
-        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
-        
-        disc_loss    = self.gan_metric(real_enc, 1.) + self.gan_metric(fake_enc, 0.) + self.gan_metric(real_dec, 1.) + self.gan_metric(fake_dec, 0.)
-        rec_loss     = F.l1_loss(real_rec, y) 
-
-        ## MSE
-        consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1))
-        consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
-
-        consist_loss = consist_loss_real + consist_loss_fake      
-
-        print("D / real_enc == ", real_enc.max())
-        print("D / fake_enc == ", fake_enc.max())
-
-        total_loss   = disc_loss + rec_loss + consist_loss
-        loss_details = {'D/real_enc': self.gan_metric(real_enc, 1.), 
-                        'D/fake_enc': self.gan_metric(fake_enc, 0.), 
-                        'D/real_dec': self.gan_metric(real_dec, 1.),
-                        'D/fake_dec': self.gan_metric(fake_dec, 0.),
-                        'D/REC_loss': F.l1_loss(real_rec, y),
-                        'D/consist_loss_real': consist_loss_real,
-                        'D/consist_loss_fake': consist_loss_fake}
-                  
         return total_loss, loss_details
 
 
@@ -2984,16 +2240,17 @@ class Ablation_F(nn.Module):
 
         return total_loss, loss_details
 
-
-# Ablation_G - MTL_D_GAN + Seg weight + Consistency loss (Different with E)
-class Ablation_G(nn.Module):
+# Ablation_D - MTL_D_GAN + Seg weight
+class Ablation_D(nn.Module):
     def __init__(self):
-        super(Ablation_G, self).__init__()
+        super(Ablation_D, self).__init__()
         # Generator
         self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
 
         # Discriminator
-        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
+        # self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
+        self.Discriminator   = Multi_Task_Discriminator_Skip(in_channels=1, out_channels=64)
+        
 
         # LOSS
         self.gan_metric_cls  = ls_gan
@@ -3002,63 +2259,88 @@ class Ablation_G(nn.Module):
         self.pixel_loss     = CharbonnierLoss()
         self.edge_loss      = EdgeLoss()
 
-    # def d_loss(self, x, y):
-    #     fake                             = self.Generator(x).detach()   
-    #     real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-    #     fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
-    
-    #     disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
+    def d_loss(self, x, y):
+        fake                             = self.Generator(x).detach()   
+        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
+        fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
+
+        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
+
+        rec_loss_real     = F.l1_loss(real_rec, y) 
+        rec_loss_fake     = F.l1_loss(fake_rec, fake) 
+        rec_loss          = rec_loss_real + rec_loss_fake
         
-    #     rec_loss_real     = F.l1_loss(real_rec, y) 
-    #     rec_loss_fake     = F.l1_loss(fake_rec, fake) 
-    #     rec_loss          = rec_loss_real + rec_loss_fake
+        print("D / real_enc == ", real_enc.max())
+        print("D / fake_enc == ", fake_enc.max())
+
+        total_loss   = disc_loss + rec_loss
+        loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
+                        'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
+                        'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
+                        'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
+                        'D/rec_loss_real': rec_loss_real,
+                        'D/rec_loss_fake': rec_loss_fake}
         
-    #     # Consistency
-    #     rec_real_enc,  rec_real_dec,  _   = self.Discriminator(real_rec.clip(0, 1))
-    #     rec_fake_enc,  rec_fake_dec,  _   = self.Discriminator(fake_rec.clip(0, 1))
+        return total_loss, loss_details
 
-    #     consist_loss_real_enc = F.mse_loss(real_enc, rec_real_enc) 
-    #     consist_loss_real_dec = F.mse_loss(real_dec, rec_real_dec)
-    #     consist_loss_fake_enc = F.mse_loss(fake_enc, rec_fake_enc) 
-    #     consist_loss_fake_dec = F.mse_loss(fake_dec, rec_fake_dec)
 
-    #     consist_loss = consist_loss_real_enc + consist_loss_real_dec + consist_loss_fake_enc + consist_loss_fake_dec
-    #     print("D / real_enc == ", real_enc.max())
-    #     print("D / fake_enc == ", fake_enc.max())
+    def g_loss(self, x, y):
+        fake                    = self.Generator(x)
+        gen_enc, gen_dec, _     = self.Discriminator(fake)
 
-    #     total_loss   = disc_loss + rec_loss + consist_loss
-    #     loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-    #                     'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-    #                     'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-    #                     'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-    #                     'D/rec_loss_real': rec_loss_real,
-    #                     'D/rec_loss_fake': rec_loss_fake,
-    #                     'D/consist_loss_real_enc': consist_loss_real_enc,
-    #                     'D/consist_loss_real_dec': consist_loss_real_dec,
-    #                     'D/consist_loss_fake_enc': consist_loss_fake_enc,
-    #                     'D/consist_loss_fake_dec': consist_loss_fake_dec}     
+        adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
+        pix_loss     = 50.0*self.pixel_loss(fake, y)
+        edge_loss    = 50.0*self.edge_loss(fake, y)
 
-    #     # return [disc_loss, rec_loss, consist_loss], loss_details                 
-    #     return total_loss, loss_details
+        print("G / real_enc == ", gen_enc.max())
+
+        total_loss   = adv_loss + pix_loss + edge_loss
+        loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
+                        'G/gen_dec': self.gan_metric_seg(gen_dec, 1., x-y), 
+                        'G/pix_loss': pix_loss,
+                        'G/edge_loss': edge_loss}
+                        
+        return total_loss, loss_details
+
+# Ablation_E - MTL_D_GAN + Seg weight + REC Consistency loss 
+class Ablation_E(nn.Module):
+    def __init__(self):
+        super(Ablation_E, self).__init__()
+        # Generator
+        self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
+
+        # Discriminator
+        # self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
+        self.Discriminator   = Multi_Task_Discriminator_Skip(in_channels=1, out_channels=64)
+
+        # LOSS
+        self.gan_metric_cls  = ls_gan
+        self.gan_metric_seg  = ls_gan_with_weight_upgrade
         
+        self.pixel_loss     = CharbonnierLoss()
+        self.edge_loss      = EdgeLoss()
 
     def d_loss(self, x, y):
         fake                             = self.Generator(x).detach()   
         real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-        fake_enc,  fake_dec,  _          = self.Discriminator(fake)
+        fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
     
         disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
         
         rec_loss_real     = F.l1_loss(real_rec, y) 
-        rec_loss          = rec_loss_real
+        rec_loss_fake     = F.l1_loss(fake_rec, fake) 
+        rec_loss          = rec_loss_real + rec_loss_fake
         
         # Consistency
         rec_real_enc,  rec_real_dec,  _   = self.Discriminator(real_rec.clip(0, 1))
+        rec_fake_enc,  rec_fake_dec,  _   = self.Discriminator(fake_rec.clip(0, 1))
 
         consist_loss_real_enc = F.mse_loss(real_enc, rec_real_enc) 
         consist_loss_real_dec = F.mse_loss(real_dec, rec_real_dec)
+        consist_loss_fake_enc = F.mse_loss(fake_enc, rec_fake_enc) 
+        consist_loss_fake_dec = F.mse_loss(fake_dec, rec_fake_dec)
 
-        consist_loss = consist_loss_real_enc + consist_loss_real_dec
+        consist_loss = consist_loss_real_enc + consist_loss_real_dec + consist_loss_fake_enc + consist_loss_fake_dec
         print("D / real_enc == ", real_enc.max())
         print("D / fake_enc == ", fake_enc.max())
 
@@ -3068,13 +2350,14 @@ class Ablation_G(nn.Module):
                         'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
                         'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
                         'D/rec_loss_real': rec_loss_real,
+                        'D/rec_loss_fake': rec_loss_fake,
                         'D/consist_loss_real_enc': consist_loss_real_enc,
-                        'D/consist_loss_real_dec': consist_loss_real_dec}     
+                        'D/consist_loss_real_dec': consist_loss_real_dec,
+                        'D/consist_loss_fake_enc': consist_loss_fake_enc,
+                        'D/consist_loss_fake_dec': consist_loss_fake_dec}     
 
-        # return [disc_loss, rec_loss, consist_loss], loss_details                 
         return total_loss, loss_details
-
-
+        
 
     def g_loss(self, x, y):
         fake                    = self.Generator(x)
@@ -3092,6 +2375,5 @@ class Ablation_G(nn.Module):
                         'G/pix_loss': pix_loss,
                         'G/edge_loss': edge_loss}
                         
-        # return [adv_loss, pix_loss, edge_loss], loss_details
         return total_loss, loss_details
  
