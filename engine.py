@@ -730,7 +730,7 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
     # FID
-    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
@@ -880,7 +880,7 @@ def test_CNN_Based_Previous(model, criterion, data_loader, device, png_save_dir)
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
     # FID
-    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
@@ -1030,7 +1030,7 @@ def test_Transformer_Based_Previous(model, criterion, data_loader, device, png_s
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
     # FID
-    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
@@ -1183,7 +1183,7 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
     
     # FID
-    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
@@ -1334,7 +1334,7 @@ def test_MAP_NN_Previous(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
     # FID
-    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
@@ -1484,7 +1484,7 @@ def test_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, png
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
     # FID
-    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
@@ -1645,7 +1645,7 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
     # FID
-    originial_fid, pred_fid, gt_fid = compute_FID(x=torch.cat(x_features, dim=0), y=torch.cat(y_features, dim=0), pred=torch.cat(pred_features, dim=0))
+    originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
