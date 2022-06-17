@@ -10,7 +10,7 @@ from tqdm import tqdm
 import sys
 import os 
 import matplotlib.pyplot as plt
-from metrics import compute_measure, compute_measure_3D, compute_FID, compute_Perceptual, compute_feat
+from metrics import compute_measure, compute_measure_3D, compute_FID, compute_Perceptual, compute_TML, compute_feat
 from monai.inferers import sliding_window_inference
 from module.sliding_window_inference_multi_output import sliding_window_inference_multi_output
 
@@ -603,13 +603,13 @@ def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_di
         # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
         
         # Discriminator
-        real_dec,  real_rec = sliding_window_inference_multi_output(inputs=input_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
-        fake_dec,  fake_rec = sliding_window_inference_multi_output(inputs=pred_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
+        # real_dec,  real_rec = sliding_window_inference_multi_output(inputs=input_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
+        # fake_dec,  fake_rec = sliding_window_inference_multi_output(inputs=pred_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
 
-        L1_loss = criterion(pred_n_100, input_n_100)
-        metric_logger.update(L1_loss=L1_loss.item())
-        vgg_loss = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
-        metric_logger.update(VGG_loss=vgg_loss.item())
+        L1_loss      = criterion(pred_n_100, input_n_100)        
+        vgg_loss     = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
+        texture_loss = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
+        metric_logger.update(L1_loss=L1_loss.item(), VGG_loss=vgg_loss.item(), TML=texture_loss.item())
 
     # # Denormalize (No windowing input version)
     # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
@@ -624,20 +624,20 @@ def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_di
     input_n_20   = fn_tonumpy(input_n_20)
     input_n_100  = fn_tonumpy(input_n_100)
     pred_n_100   = fn_tonumpy(pred_n_100)
-    real_dec   = fn_tonumpy(real_dec)
-    real_rec   = fn_tonumpy(real_rec)
-    fake_dec   = fn_tonumpy(fake_dec)
-    fake_rec   = fn_tonumpy(fake_rec)    
+    # real_dec   = fn_tonumpy(real_dec)
+    # real_rec   = fn_tonumpy(real_rec)
+    # fake_dec   = fn_tonumpy(fake_dec)
+    # fake_rec   = fn_tonumpy(fake_rec)    
 
     # PNG Save
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
     
-    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_dec.png', real_dec.squeeze(), cmap="jet")    
-    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_rec.png', real_rec.squeeze(), cmap="gray")    
-    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_dec.png', fake_dec.squeeze(), cmap="jet")    
-    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_rec.png', fake_rec.squeeze(), cmap="gray")
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_dec.png', real_dec.squeeze(), cmap="jet")    
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_rec.png', real_rec.squeeze(), cmap="gray")    
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_dec.png', fake_dec.squeeze(), cmap="jet")    
+    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_rec.png', fake_rec.squeeze(), cmap="gray")
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -692,7 +692,9 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_tml, pred_tml, gt_tml          = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        metric_logger.update(input_tml=originial_tml,       pred_tml=pred_tml,       gt_tml=gt_tml)
         x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
@@ -863,7 +865,9 @@ def test_CNN_Based_Previous(model, criterion, data_loader, device, png_save_dir)
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_tml, pred_tml, gt_tml          = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        metric_logger.update(input_tml=originial_tml,       pred_tml=pred_tml,       gt_tml=gt_tml)
         x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
@@ -1013,7 +1017,9 @@ def test_Transformer_Based_Previous(model, criterion, data_loader, device, png_s
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_tml, pred_tml, gt_tml          = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        metric_logger.update(input_tml=originial_tml,       pred_tml=pred_tml,       gt_tml=gt_tml)
         x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
@@ -1090,10 +1096,10 @@ def valid_WGAN_VGG_Previous(model, criterion, data_loader, device, epoch, png_sa
         
         pred_n_100 = model.Generator(input_n_20)
             
-        L1_loss = criterion(pred_n_100, input_n_100)
-        loss_value = L1_loss.item()
-        metric_logger.update(L1_loss=loss_value)
-
+        L1_loss      = criterion(pred_n_100, input_n_100)        
+        vgg_loss     = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
+        texture_loss = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
+        metric_logger.update(L1_loss=L1_loss.item(), VGG_loss=vgg_loss.item(), TML=texture_loss.item())
 
     # Denormalize (No windowing input version)
     # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
@@ -1166,7 +1172,9 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_tml, pred_tml, gt_tml          = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        metric_logger.update(input_tml=originial_tml,       pred_tml=pred_tml,       gt_tml=gt_tml)
         x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
@@ -1317,7 +1325,9 @@ def test_MAP_NN_Previous(model, criterion, data_loader, device, png_save_dir):
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_tml, pred_tml, gt_tml          = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        metric_logger.update(input_tml=originial_tml,       pred_tml=pred_tml,       gt_tml=gt_tml)
         x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
@@ -1467,7 +1477,9 @@ def test_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, png
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_tml, pred_tml, gt_tml          = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        metric_logger.update(input_tml=originial_tml,       pred_tml=pred_tml,       gt_tml=gt_tml)
         x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric
@@ -1628,7 +1640,9 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         originial_percep, pred_percep, gt_percep = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
+        originial_tml, pred_tml, gt_tml          = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
         metric_logger.update(input_percep=originial_percep, pred_percep=pred_percep, gt_percep=gt_percep)
+        metric_logger.update(input_tml=originial_tml,       pred_tml=pred_tml,       gt_tml=gt_tml)
         x_features.append(x_feature); y_features.append(y_feature); pred_features.append(pred_feature)
 
         # Metric

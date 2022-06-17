@@ -10,6 +10,8 @@ from module.piq import FID
 from torchvision import models
 from module.piq.feature_extractors import InceptionV3
 
+# reference: https://github.com/geonm/EnhanceNet-Tensorflow/blob/d0e527418f8b3fd167a61c8777483259d04fc4ab/losses.py
+# reference: https://github.com/NVIDIA/pix2pixHD/blob/5a2c87201c5957e2bf51d79b8acddb9cc1920b26/models/networks.py
 class Vgg19(torch.nn.Module):
     def __init__(self, requires_grad=False):
         super(Vgg19, self).__init__()
@@ -58,6 +60,52 @@ class VGGLoss(torch.nn.Module):
             loss += self.weights[i]*self.criterion(x_vgg[i], y_vgg[i].detach())        
         return loss
 
+# reference: https://github.com/chongyangma/cs231n/blob/master/assignments/assignment3/style_transfer_pytorch.py
+class TextureMatchingLoss(torch.nn.Module):
+    def __init__(self, patch_size=16, use_patch=True, device='cuda'):
+        super(TextureMatchingLoss, self).__init__()
+        self.patch_size = patch_size
+        self.use_patch  = use_patch
+        self.unfold     = torch.nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
+        self.vgg        = Vgg19().to(device)
+        self.criterion  = torch.nn.L1Loss()
+        self.weights    = [1.0/32, 1.0/16, 1.0/8, 1.0/4, 1.0]        
+
+    def gram_matrix(self, features):
+        N, C, H, W    = features.size()
+        feat_reshaped = features.view(N, C, H*W)
+        gram          = torch.bmm(feat_reshaped, feat_reshaped.transpose(1, 2))
+        # gram          = gram / (C*H*W) # normalize
+        return gram
+
+    def patch_resize(self, x):
+        b, c, _, _ = x.shape
+        # b, c*k*k, H/k*W/k
+        x = self.unfold(x)
+        _, _, l = x.shape
+        # b, c, k, k, H/k*W/k
+        x = x.view(b, c, self.patch_size, self.patch_size, -1)
+        # b, H/k*W/k, c, k, k
+        x = x.permute(0, 4, 1, 2, 3)
+        try:
+            x = x.view(-1, c, self.patch_size, self.patch_size)
+        except:
+            x = x.contiguous().view(-1, c, self.patch_size, self.patch_size)
+        return x
+
+    def forward(self, x, y):
+        self.vgg.eval()
+        with torch.no_grad():     
+            x_vgg, y_vgg = self.vgg(x.repeat(1,3,1,1)), self.vgg(y.repeat(1,3,1,1))
+
+        loss = 0    
+        for i in range(len(x_vgg)):
+            if self.use_patch:
+                loss += self.weights[i]*self.criterion(self.gram_matrix(self.patch_resize(x_vgg[i])), self.gram_matrix(self.patch_resize(y_vgg[i].detach())))           
+            else:
+                loss += self.weights[i]*self.criterion(self.gram_matrix(x_vgg[i]), self.gram_matrix(y_vgg[i].detach()))         
+
+        return loss
 
 def compute_feat(x, y, pred, device='cpu'):
     if len(x.size()) == 2:
@@ -84,9 +132,9 @@ def compute_FID(x_feats, y_feats, pred_feats):
     
     assert len(x_feats.shape) == 2 and len(y_feats.shape) == 2 and len(pred_feats.shape) == 2
     
-    originial_fid  = fid_metric(x_feats, y_feats)    
+    originial_fid  = fid_metric(x_feats,    y_feats)    
     pred_fid       = fid_metric(pred_feats, y_feats)    
-    gt_fid         = fid_metric(y_feats, y_feats)    
+    gt_fid         = fid_metric(y_feats,    y_feats)    
 
     return originial_fid, pred_fid, gt_fid
 
@@ -94,7 +142,7 @@ def compute_Perceptual(x, y, pred, option=True, device='cpu'):
     vgg_metric  = VGGLoss(device=device)
 
     assert len(x.shape) == 4 and len(y.shape) == 4 and len(pred.shape) == 4
-    
+
     if option:
         originial_percep  = vgg_metric(x, y)    
         pred_percep       = vgg_metric(pred, y)    
@@ -105,6 +153,20 @@ def compute_Perceptual(x, y, pred, option=True, device='cpu'):
         pred_percep       = vgg_metric(pred, y)    
         return pred_percep
 
+def compute_TML(x, y, pred, option=True, device='cpu'):
+    tml_metric  = TextureMatchingLoss(device=device)
+
+    assert len(x.shape) == 4 and len(y.shape) == 4 and len(pred.shape) == 4
+
+    if option:
+        originial_tml  = tml_metric(x, y)    
+        pred_tml       = tml_metric(pred, y)    
+        gt_tml         = tml_metric(y, y)    
+        return originial_tml, pred_tml, gt_tml
+
+    else :   
+        pred_tml       = tml_metric(pred, y)    
+        return pred_tml
 
 # Ref: https://github.com/SSinyu/WGAN-VGG/blob/d9af4a2cf6d1f4271546e0c01847bbc38d13b910/metric.py#L7
 
