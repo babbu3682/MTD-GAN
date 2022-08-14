@@ -4,6 +4,7 @@ import utils
 import torch
 from torch.nn import functional as F
 
+import pandas as pd
 import numpy as np
 from pydicom import dcmread
 from tqdm import tqdm
@@ -126,7 +127,6 @@ def valid_CNN_Based_Ours(model, criterion, data_loader, device, epoch, png_save_
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
-
 
 @torch.no_grad()
 def test_CNN_Based_Ours(model, data_loader, device, save_dir):
@@ -599,17 +599,21 @@ def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_di
         input_n_100  = batch_data['n_100'].to(device).float()
 
         # Generator
-        pred_n_100 = model.Generator(input_n_20)     
-        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')
+        # pred_n_100 = model.Generator(input_n_20)     
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian')
         
         # Discriminator
-        # real_dec,  real_rec = sliding_window_inference_multi_output(inputs=input_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
-        # fake_dec,  fake_rec = sliding_window_inference_multi_output(inputs=pred_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
+        real_dec,  real_rec = sliding_window_inference_multi_output(inputs=input_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
+        fake_dec,  fake_rec = sliding_window_inference_multi_output(inputs=pred_n_100, roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
 
         L1_loss      = criterion(pred_n_100, input_n_100)        
         vgg_loss     = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
         texture_loss = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
         metric_logger.update(L1_loss=L1_loss.item(), VGG_loss=vgg_loss.item(), TML=texture_loss.item())
+
+        # Consistency
+        c_real_dec,  _ = sliding_window_inference_multi_output(inputs=real_rec.clip(0, 1), roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')
+        c_fake_dec,  _ = sliding_window_inference_multi_output(inputs=fake_rec.clip(0, 1), roi_size=(64, 64), sw_batch_size=8, predictor=model.Discriminator, overlap=0.5, mode='gaussian')        
 
     # # Denormalize (No windowing input version)
     # input_n_20   = dicom_denormalize(fn_tonumpy(input_n_20)).clip(min=0, max=80)
@@ -624,20 +628,28 @@ def valid_MTD_GAN_Ours(model, criterion, data_loader, device, epoch, png_save_di
     input_n_20   = fn_tonumpy(input_n_20)
     input_n_100  = fn_tonumpy(input_n_100)
     pred_n_100   = fn_tonumpy(pred_n_100)
-    # real_dec   = fn_tonumpy(real_dec)
-    # real_rec   = fn_tonumpy(real_rec)
-    # fake_dec   = fn_tonumpy(fake_dec)
-    # fake_rec   = fn_tonumpy(fake_rec)    
+    real_dec   = fn_tonumpy(real_dec)
+    real_rec   = fn_tonumpy(real_rec)
+    fake_dec   = fn_tonumpy(fake_dec)
+    fake_rec   = fn_tonumpy(fake_rec)
+    
+    # Consistency
+    c_real_dec   = fn_tonumpy(c_real_dec)    
+    c_fake_dec   = fn_tonumpy(c_fake_dec)
+    
 
     # PNG Save
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_input_n_20.png', input_n_20.squeeze(), cmap="gray")
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_gt_n_100.png',   input_n_100.squeeze(), cmap="gray")
     plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray")
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_dec.png', real_dec.squeeze(), cmap="jet")    
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_rec.png', real_rec.squeeze(), cmap="gray")    
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_dec.png', fake_dec.squeeze(), cmap="jet")    
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_rec.png', fake_rec.squeeze(), cmap="gray")
     
-    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_dec.png', real_dec.squeeze(), cmap="jet")    
-    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_real_rec.png', real_rec.squeeze(), cmap="gray")    
-    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_dec.png', fake_dec.squeeze(), cmap="jet")    
-    # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_fake_rec.png', fake_rec.squeeze(), cmap="gray")
+    # Consistency
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_c_real_dec.png', c_real_dec.squeeze(), cmap="jet")      
+    plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_c_fake_dec.png', c_fake_dec.squeeze(), cmap="jet")    
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -650,13 +662,24 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
     y_features    = []
     pred_features = []
 
+    # Metric
+    path_list = []
+    pl_list   = []
+    tml_list  = []
+    rmse_list = []
+    psnr_list = []
+    ssim_list = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
 
         pred_n_100 = model.Generator(input_n_20)     
-        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant').clip(min=0, max=1)
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.25, mode='gaussian').clip(min=0, max=1)
+        
+        # OLD
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant').clip(min=0, max=1)        
 
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()
@@ -711,6 +734,14 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
 
+        # Metric
+        path_list.append(batch_data['path_n_20'][0])
+        pl_list.append(pred_percep.item())
+        tml_list.append(pred_tml.item())
+        rmse_list.append(pred_result[2])
+        psnr_list.append(pred_result[0])
+        ssim_list.append(pred_result[1])
+
         # # INFERENCE
         # os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[-1], mode=0o777, exist_ok=True) # dicom save folder
         # os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[-1], mode=0o777, exist_ok=True) # png   save folder
@@ -735,6 +766,16 @@ def test_MTD_GAN_Ours(model, criterion, data_loader, device, png_save_dir):
     originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
 
+    # DataFrame
+    df = pd.DataFrame()
+    df['PATH'] = path_list
+    df['PL'] = pl_list
+    df['TML'] = tml_list
+    df['RMSE'] = rmse_list
+    df['PSNR'] = psnr_list
+    df['SSIM'] = ssim_list
+    df.to_csv(png_save_dir+'pred_results.csv')
+    
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
 
@@ -824,6 +865,14 @@ def test_CNN_Based_Previous(model, criterion, data_loader, device, png_save_dir)
     y_features    = []
     pred_features = []
 
+    # Metric
+    path_list = []
+    pl_list   = []
+    tml_list  = []
+    rmse_list = []
+    psnr_list = []
+    ssim_list = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -883,9 +932,27 @@ def test_CNN_Based_Previous(model, criterion, data_loader, device, png_save_dir)
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
+        # Metric
+        path_list.append(batch_data['path_n_20'][0])
+        pl_list.append(pred_percep.item())
+        tml_list.append(pred_tml.item())
+        rmse_list.append(pred_result[2])
+        psnr_list.append(pred_result[0])
+        ssim_list.append(pred_result[1])
+
     # FID
     originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
+
+    # DataFrame
+    df = pd.DataFrame()
+    df['PATH'] = path_list
+    df['PL'] = pl_list
+    df['TML'] = tml_list
+    df['RMSE'] = rmse_list
+    df['PSNR'] = psnr_list
+    df['SSIM'] = ssim_list
+    df.to_csv(png_save_dir+'pred_results.csv')
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -973,13 +1040,22 @@ def test_Transformer_Based_Previous(model, criterion, data_loader, device, png_s
     y_features    = []
     pred_features = []
 
+    # Metric
+    path_list = []
+    pl_list   = []
+    tml_list  = []
+    rmse_list = []
+    psnr_list = []
+    ssim_list = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
         input_n_100  = batch_data['n_100'].to(device).float()
         
         # Forward Generator
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.5, mode='constant')     
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=16, predictor=model, overlap=0.80, mode='constant')     
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.25, mode='constant')     
 
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()
@@ -1035,9 +1111,27 @@ def test_Transformer_Based_Previous(model, criterion, data_loader, device, png_s
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
+        # Metric
+        path_list.append(batch_data['path_n_20'][0])
+        pl_list.append(pred_percep.item())
+        tml_list.append(pred_tml.item())
+        rmse_list.append(pred_result[2])
+        psnr_list.append(pred_result[0])
+        ssim_list.append(pred_result[1])
+
     # FID
     originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
+
+    # DataFrame
+    df = pd.DataFrame()
+    df['PATH'] = path_list
+    df['PL'] = pl_list
+    df['TML'] = tml_list
+    df['RMSE'] = rmse_list
+    df['PSNR'] = psnr_list
+    df['SSIM'] = ssim_list
+    df.to_csv(png_save_dir+'pred_results.csv')
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -1095,7 +1189,10 @@ def valid_WGAN_VGG_Previous(model, criterion, data_loader, device, epoch, png_sa
         input_n_100  = batch_data['n_100'].to(device).float()
         
         pred_n_100 = model.Generator(input_n_20)
-            
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')     
+        # print("input_n_20 == ", input_n_20.shape)
+        # print("pred_n_100 == ", pred_n_100.shape)
+
         L1_loss      = criterion(pred_n_100, input_n_100)        
         vgg_loss     = compute_Perceptual(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
         texture_loss = compute_TML(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), option=False, device='cuda')
@@ -1130,6 +1227,14 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
     y_features    = []
     pred_features = []
 
+    # Metric
+    path_list = []
+    pl_list   = []
+    tml_list  = []
+    rmse_list = []
+    psnr_list = []
+    ssim_list = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -1137,6 +1242,7 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
         
         # Forward Generator
         pred_n_100 = model.Generator(input_n_20)
+        # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model.Generator, overlap=0.5, mode='constant')     
 
         L1_loss = criterion(pred_n_100, input_n_100)
         loss_value = L1_loss.item()
@@ -1189,10 +1295,28 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_gt_n_20.png'),     input_n_20.squeeze(),  cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
-    
+
+        # Metric
+        path_list.append(batch_data['path_n_20'][0])
+        pl_list.append(pred_percep.item())
+        tml_list.append(pred_tml.item())
+        rmse_list.append(pred_result[2])
+        psnr_list.append(pred_result[0])
+        ssim_list.append(pred_result[1])
+
     # FID
     originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
+
+    # DataFrame
+    df = pd.DataFrame()
+    df['PATH'] = path_list
+    df['PL'] = pl_list
+    df['TML'] = tml_list
+    df['RMSE'] = rmse_list
+    df['PSNR'] = psnr_list
+    df['SSIM'] = ssim_list
+    df.to_csv(png_save_dir+'pred_results.csv')
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -1282,6 +1406,14 @@ def test_MAP_NN_Previous(model, criterion, data_loader, device, png_save_dir):
     y_features    = []
     pred_features = []
 
+    # Metric
+    path_list = []
+    pl_list   = []
+    tml_list  = []
+    rmse_list = []
+    psnr_list = []
+    ssim_list = []
+
     iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
     for batch_data in iterator:
         
@@ -1343,9 +1475,27 @@ def test_MAP_NN_Previous(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
+        # Metric
+        path_list.append(batch_data['path_n_20'][0])
+        pl_list.append(pred_percep.item())
+        tml_list.append(pred_tml.item())
+        rmse_list.append(pred_result[2])
+        psnr_list.append(pred_result[0])
+        ssim_list.append(pred_result[1])
+
     # FID
     originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
+
+    # DataFrame
+    df = pd.DataFrame()
+    df['PATH'] = path_list
+    df['PL'] = pl_list
+    df['TML'] = tml_list
+    df['RMSE'] = rmse_list
+    df['PSNR'] = psnr_list
+    df['SSIM'] = ssim_list
+    df.to_csv(png_save_dir+'pred_results.csv')
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -1433,7 +1583,15 @@ def test_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, png
     x_features    = []
     y_features    = []
     pred_features = []    
-    
+
+    # Metric
+    path_list = []
+    pl_list   = []
+    tml_list  = []
+    rmse_list = []
+    psnr_list = []
+    ssim_list = []
+
     iterator = tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=50)    
     for batch_data in iterator:
         
@@ -1495,9 +1653,27 @@ def test_Markovian_Patch_GAN_Previous(model, criterion, data_loader, device, png
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
+        # Metric
+        path_list.append(batch_data['path_n_20'][0])
+        pl_list.append(pred_percep.item())
+        tml_list.append(pred_tml.item())
+        rmse_list.append(pred_result[2])
+        psnr_list.append(pred_result[0])
+        ssim_list.append(pred_result[1])
+
     # FID
     originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
+
+    # DataFrame
+    df = pd.DataFrame()
+    df['PATH'] = path_list
+    df['PL'] = pl_list
+    df['TML'] = tml_list
+    df['RMSE'] = rmse_list
+    df['PSNR'] = psnr_list
+    df['SSIM'] = ssim_list
+    df.to_csv(png_save_dir+'pred_results.csv')
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 
@@ -1598,6 +1774,14 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
     y_features    = []
     pred_features = []
 
+    # Metric
+    path_list = []
+    pl_list   = []
+    tml_list  = []
+    rmse_list = []
+    psnr_list = []
+    ssim_list = []
+
     for batch_data in tqdm(data_loader, desc='TEST: ', file=sys.stdout, mininterval=10):
         
         input_n_20   = batch_data['n_20'].to(device).float()
@@ -1611,8 +1795,8 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
         metric_logger.update(L1_loss=loss_value)            
 
         # SAVE
-        # os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
-        # os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
+        os.makedirs(png_save_dir.replace('/png/', '/dcm/') + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # dicom save folder
+        os.makedirs(png_save_dir                           + batch_data['path_n_20'][0].split('/')[7], mode=0o777, exist_ok=True) # png   save folder
         
         # # Denormalize (No windowing input version)
         # input_n_20    = dicom_denormalize(fn_tonumpy(input_n_20))
@@ -1658,9 +1842,27 @@ def test_DUGAN_Previous(model, criterion, data_loader, device, png_save_dir):
         plt.imsave(png_save_dir+batch_data['path_n_100'][0].split('/')[7] +'/'+batch_data['path_n_100'][0].split('_')[-1].replace('.dcm', '_gt_n_100.png'),   input_n_100.squeeze(), cmap="gray")
         plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.squeeze(),  cmap="gray")
 
+        # Metric
+        path_list.append(batch_data['path_n_20'][0])
+        pl_list.append(pred_percep.item())
+        tml_list.append(pred_tml.item())
+        rmse_list.append(pred_result[2])
+        psnr_list.append(pred_result[0])
+        ssim_list.append(pred_result[1])
+
     # FID
     originial_fid, pred_fid, gt_fid = compute_FID(torch.cat(x_features, dim=0), torch.cat(y_features, dim=0), torch.cat(pred_features, dim=0))
     metric_logger.update(input_fid=originial_fid, pred_fid=pred_fid, gt_fid=gt_fid)   
+
+    # DataFrame
+    df = pd.DataFrame()
+    df['PATH'] = path_list
+    df['PL'] = pl_list
+    df['TML'] = tml_list
+    df['RMSE'] = rmse_list
+    df['PSNR'] = psnr_list
+    df['SSIM'] = ssim_list
+    df.to_csv(png_save_dir+'pred_results.csv')
 
     return {k: round(meter.global_avg, 7) for k, meter in metric_logger.meters.items()}
 

@@ -3,9 +3,6 @@ import torch
 import torch.nn as nn
 from torchvision.models import vgg19
 
-#  Reference: https://github.com/SSinyu/WGAN-VGG/blob/master/networks.py
-#  But it has a few error lines.
-
 
 class WGAN_VGG_Generator(nn.Module):
     def __init__(self):
@@ -58,6 +55,104 @@ class WGAN_VGG_Discriminator(nn.Module):
         return out
 
 
+#  Reference: https://github.com/SSinyu/WGAN-VGG/blob/master/networks.py
+#  Reference: https://github.com/yyqqss09/ldct_denoising/blob/master/models.py
+#  But it has a few error lines.
+
+# class WGAN_VGG_Generator(nn.Module):
+#     def __init__(self):
+#         super(WGAN_VGG_Generator, self).__init__()
+#         self.up1 = nn.Upsample(size=80, mode='bicubic')
+#         self.up2 = nn.Upsample(size=528, mode='bicubic')
+#         layers = [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()]
+#         for i in range(2, 8):
+#             layers.append(nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False))
+#             layers.append(nn.ReLU())
+            
+#         layers.extend([nn.Conv2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()])
+#         self.net = nn.Sequential(*layers)
+
+#     def forward(self, x):
+#         if self.training:
+#             x   = self.up1(x)
+#         else :
+#             x   = self.up2(x)
+#         out = self.net(x)
+#         return out
+
+
+# class WGAN_VGG_Discriminator(nn.Module):
+#     def __init__(self):
+#         super(WGAN_VGG_Discriminator, self).__init__()
+        
+#         def add_block(layers, ch_in, ch_out, stride):
+#             layers.append(nn.Conv2d(in_channels=ch_in, out_channels=ch_out, kernel_size=3, stride=stride, padding=1))
+#             layers.append(nn.LeakyReLU(0.2))
+#             return layers
+
+#         layers = []
+#         ch_stride_set = [(1,64,1),(64,64,2),(64,128,1),(128,128,2),(128,256,1),(256,256,2)]
+#         for ch_in, ch_out, stride in ch_stride_set:
+#             add_block(layers, ch_in, ch_out, stride)
+
+#         self.net   = nn.Sequential(*layers)
+#         self.fc1   = nn.Linear(256*8*8, 1024)
+#         self.lrelu = nn.LeakyReLU(0.2)
+#         self.fc2   = nn.Linear(1024, 1)
+        
+
+#     def forward(self, x):
+#         out = self.net(x)
+#         out = out.flatten(1)
+#         out = self.fc1(out)
+#         out = self.lrelu(out)
+#         out = self.fc2(out)
+#         return out
+
+# class WGAN_VGG_Generator(nn.Module):
+#     def __init__(self):
+#         super(WGAN_VGG_Generator, self).__init__()
+#         layers = [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1, bias=False), nn.ReLU()]
+#         for i in range(2, 8):
+#             layers.append(nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1, bias=False))
+#             layers.append(nn.ReLU())
+            
+#         layers.extend([nn.Conv2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=1, bias=False), nn.ReLU()])
+#         self.net = nn.Sequential(*layers)
+
+#     def forward(self, x):
+#         out = self.net(x)
+#         return out
+
+
+# class WGAN_VGG_Discriminator(nn.Module):
+#     def __init__(self):
+#         super(WGAN_VGG_Discriminator, self).__init__()
+        
+#         def add_block(layers, ch_in, ch_out, stride):
+#             layers.append(nn.Conv2d(in_channels=ch_in, out_channels=ch_out, kernel_size=3, stride=stride, padding=1))
+#             layers.append(nn.LeakyReLU(0.2))
+#             return layers
+
+#         layers = []
+#         ch_stride_set = [(1,64,1),(64,64,2),(64,128,1),(128,128,2),(128,256,1),(256,256,2)]
+#         for ch_in, ch_out, stride in ch_stride_set:
+#             add_block(layers, ch_in, ch_out, stride)
+
+#         self.net   = nn.Sequential(*layers)
+#         self.fc1   = nn.Linear(256*8*8, 1024)
+#         self.lrelu = nn.LeakyReLU(0.2)
+#         self.fc2   = nn.Linear(1024, 1)
+        
+
+#     def forward(self, x):
+#         out = self.net(x)
+#         out = out.flatten(1)
+#         out = self.fc1(out)
+#         out = self.lrelu(out)
+#         out = self.fc2(out)
+#         return out
+
 class WGAN_VGG_FeatureExtractor(nn.Module):
     def __init__(self):
         super(WGAN_VGG_FeatureExtractor, self).__init__()
@@ -72,13 +167,20 @@ class WGAN_VGG_FeatureExtractor(nn.Module):
 
 
 class WGAN_VGG(nn.Module):
-    # referred from https://github.com/kuc2477/pytorch-wgan-gp
     def __init__(self, input_size=64):
         super(WGAN_VGG, self).__init__()
         self.Generator         = WGAN_VGG_Generator()
         self.Discriminator     = WGAN_VGG_Discriminator(input_size)
         self.feature_extractor = WGAN_VGG_FeatureExtractor()
         self.p_criterion       = nn.MSELoss()
+
+    # # referred from https://github.com/kuc2477/pytorch-wgan-gp
+    # def __init__(self):
+    #     super(WGAN_VGG, self).__init__()
+    #     self.Generator         = WGAN_VGG_Generator()
+    #     self.Discriminator     = WGAN_VGG_Discriminator()
+    #     self.feature_extractor = WGAN_VGG_FeatureExtractor()
+    #     self.p_criterion       = nn.MSELoss()        
 
     def d_loss(self, x, y, gp=True, return_gp=False):
         fake   = self.Generator(x).detach()   # fixed this line.

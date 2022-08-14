@@ -91,7 +91,12 @@ def main(args):
         print("Loading... Resume")
         checkpoint = torch.load(args.resume, map_location='cpu')
         checkpoint['model_state_dict'] = {k.replace('.module', ''):v for k,v in checkpoint['model_state_dict'].items()} # fix loading multi-gpu 
-        model.load_state_dict(checkpoint['model_state_dict'])   
+        model.load_state_dict(checkpoint['model_state_dict'])
+
+        # Load Only Generator(=Denoiser) weights
+        # generator = {k: v for k, v in checkpoint['model_state_dict'].items() if "Generator." in k}
+        # generator = {k.replace('Generator.', ''):v for k,v in generator.items()} 
+        # model.Generator.load_state_dict(generator)   
 
     # Cuda
     model.to(device)

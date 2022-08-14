@@ -130,7 +130,7 @@ def main(args):
         lr_scheduler_G = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
         lr_scheduler_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_D, args=args)
         
-        if args.pcgrad:
+        if (args.pcgrad) and (not args.resume):
             optimizer_G = PCGrad(optimizer_G)
             optimizer_D = PCGrad(optimizer_D)
 
