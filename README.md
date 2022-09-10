@@ -1,4 +1,4 @@
-# FD-Net - Official Pytorch Implementation
+# MTD-GAN - Official Pytorch Implementation
 
 It's scheduled to be uploaded soon. We are modifying the code for easier use.
 We proposed a supervised multi-task aiding representation transfer learning network called <b>FD-Net</b>.
