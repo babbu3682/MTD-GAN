@@ -1208,6 +1208,12 @@ def valid_WGAN_VGG_Previous(model, criterion, data_loader, device, epoch, png_sa
     # plt.imsave(png_save_dir+'epoch_'+str(epoch)+'_pred_n_100.png', pred_n_100.squeeze(), cmap="gray", vmin=0, vmax=80)
 
     # Denormalize (windowing input version)
+
+    # # WGAN-VGG margin value range -> (-40, 120) ---> (0, 1) ---> (-40, 120) ---> (0, 80) ---> (0, 1)
+    # input_n_20    = (input_n_20*160.0-40.0).clip(0.0, 80.0) / 80.0
+    # input_n_100   = (input_n_100*160.0-40.0).clip(0.0, 80.0) / 80.0
+    # pred_n_100    = (pred_n_100.clip(0.0, 1.0)*160.0-40.0).clip(0.0, 80.0) / 80.0
+
     input_n_20   = fn_tonumpy(input_n_20)
     input_n_100  = fn_tonumpy(input_n_100)
     pred_n_100   = fn_tonumpy(pred_n_100)
@@ -1274,6 +1280,11 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
         # plt.imsave(png_save_dir+batch_data['path_n_20'][0].split('/')[7]  +'/'+batch_data['path_n_20'][0].split('_')[-1].replace('.dcm', '_pred_n_100.png'),  pred_n_100.clip(min=0, max=80).squeeze(),  cmap="gray", vmin=0, vmax=80)
 
         # Denormalize (windowing input version)
+
+        # WGAN-VGG margin value range -> (-40, 120) ---> (0, 1) ---> (-40, 120) ---> (0, 80) ---> (0, 1)
+        input_n_20    = (input_n_20*160.0-40.0).clip(0.0, 80.0) / 80.0
+        input_n_100   = (input_n_100*160.0-40.0).clip(0.0, 80.0) / 80.0
+        pred_n_100    = (pred_n_100.clip(0.0, 1.0)*160.0-40.0).clip(0.0, 80.0) / 80.0
 
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
