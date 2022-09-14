@@ -168,13 +168,9 @@ def Sinogram_Dataset_DCM_Windowing(mode, patch_training):
                     
                     # Crop  
                     CropForegroundd(keys=["n_20", "n_100"], source_key="n_100", select_fn=lambda x: x > 0),
-                    # SpatialPadd(keys=["n_20", "n_100"], spatial_size=(64, 64)),
-                    # RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                    SpatialPadd(keys=["n_20", "n_100"], spatial_size=(64, 64)),
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
                         # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
-
-                        # Only for WGAN-VGG 
-                    SpatialPadd(keys=["n_20", "n_100"], spatial_size=(80, 80)),
-                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(80, 80), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
 
                     # (15 degree rotation, vertical & horizontal flip & scaling)
                     RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
@@ -195,6 +191,9 @@ def Sinogram_Dataset_DCM_Windowing(mode, patch_training):
                 [
                     Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
                     ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+                        # Only for WGAN-VGG 
+                    # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-40.0, a_max=120.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]                                 
+                    
                     AddChanneld(keys=["n_20", "n_100"]),                 
 
                     # (15 degree rotation, vertical & horizontal flip & scaling)
@@ -221,6 +220,9 @@ def Sinogram_Dataset_DCM_Windowing(mode, patch_training):
             [
                 Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
                 ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+                    # Only for WGAN-VGG 
+                # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-40.0, a_max=120.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]                                                 
+               
                 AddChanneld(keys=["n_20", "n_100"]),     
 
                 # Normalize
@@ -506,8 +508,8 @@ def TEST_Sinogram_Dataset_DCM_Windowing():
     transforms = Compose(
         [
             Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-            # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
-            ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-40.0, a_max=120.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]             
+            ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),          # No Margin
+            # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-40.0, a_max=120.0, b_min=0.0, b_max=1.0, clip=True),     # Yes Margin
             AddChanneld(keys=["n_20", "n_100"]),         
 
             # Normalize

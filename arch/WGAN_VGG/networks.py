@@ -9,25 +9,40 @@ import torchvision
 #  training: padding=0 // validation: padding=1 == from official code
 
 
+# class WGAN_VGG_Generator(nn.Module):
+#     def __init__(self):
+#         super(WGAN_VGG_Generator, self).__init__()
+#         layers = [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()]
+#         for i in range(2, 8):
+#             layers.append(nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False))
+#             layers.append(nn.ReLU())
+            
+#         layers.extend([nn.Conv2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()])
+#         self.net = nn.Sequential(*layers)
+
+#     def forward(self, x):
+#         if self.training:
+#             for i in self.net:
+#                 i.padding = (0, 0)
+#         else :                
+#             for i in self.net:
+#                 i.padding = (1, 1)            
+            
+#         out = self.net(x)
+#         return out
+
 class WGAN_VGG_Generator(nn.Module):
     def __init__(self):
         super(WGAN_VGG_Generator, self).__init__()
-        layers = [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()]
+        layers = [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1, bias=False), nn.ReLU()]
         for i in range(2, 8):
-            layers.append(nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False))
+            layers.append(nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1, bias=False))
             layers.append(nn.ReLU())
             
-        layers.extend([nn.Conv2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()])
+        layers.extend([nn.Conv2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=1, bias=False), nn.ReLU()])
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x):
-        if self.training:
-            for i in self.net:
-                i.padding = (0, 0)
-        else :                
-            for i in self.net:
-                i.padding = (1, 1)            
-            
+    def forward(self, x):            
         out = self.net(x)
         return out
 
@@ -82,7 +97,7 @@ class WGAN_VGG(nn.Module):
         self.p_criterion       = nn.MSELoss()
 
     def d_loss(self, x, y, gp=True, return_gp=False):
-        y      = torchvision.transforms.CenterCrop(size=64)(y)  # fixed this line.
+        # y      = torchvision.transforms.CenterCrop(size=64)(y)  # fixed this line.
         
         fake   = self.Generator(x).detach()                     # fixed this line.
         d_fake = self.Discriminator(fake)
@@ -100,7 +115,7 @@ class WGAN_VGG(nn.Module):
         return (loss, gp_loss) if return_gp else loss
 
     def g_loss(self, x, y, perceptual=True, return_p=False):
-        y      = torchvision.transforms.CenterCrop(size=64)(y)
+        # y      = torchvision.transforms.CenterCrop(size=64)(y)
         
         fake   = self.Generator(x)
         d_fake = self.Discriminator(fake)

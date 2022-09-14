@@ -1054,7 +1054,7 @@ def test_Transformer_Based_Previous(model, criterion, data_loader, device, png_s
         input_n_100  = batch_data['n_100'].to(device).float()
         
         # Forward Generator
-        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=16, predictor=model, overlap=0.80, mode='constant')     
+        pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=16, predictor=model, overlap=0.90, mode='constant')     
         # pred_n_100 = sliding_window_inference(inputs=input_n_20, roi_size=(64, 64), sw_batch_size=1, predictor=model, overlap=0.25, mode='constant')     
 
         L1_loss = criterion(pred_n_100, input_n_100)
@@ -1281,10 +1281,10 @@ def test_WGAN_VGG_Previous(model, criterion, data_loader, device, png_save_dir):
 
         # Denormalize (windowing input version)
 
-        # WGAN-VGG margin value range -> (-40, 120) ---> (0, 1) ---> (-40, 120) ---> (0, 80) ---> (0, 1)
-        input_n_20    = (input_n_20*160.0-40.0).clip(0.0, 80.0) / 80.0
-        input_n_100   = (input_n_100*160.0-40.0).clip(0.0, 80.0) / 80.0
-        pred_n_100    = (pred_n_100.clip(0.0, 1.0)*160.0-40.0).clip(0.0, 80.0) / 80.0
+        # # WGAN-VGG margin value range -> (-40, 120) ---> (0, 1) ---> (-40, 120) ---> (0, 80) ---> (0, 1)
+        # input_n_20    = (input_n_20*160.0-40.0).clip(0.0, 80.0) / 80.0
+        # input_n_100   = (input_n_100*160.0-40.0).clip(0.0, 80.0) / 80.0
+        # pred_n_100    = (pred_n_100.clip(0.0, 1.0)*160.0-40.0).clip(0.0, 80.0) / 80.0
 
         # Perceptual & FID
         x_feature, y_feature, pred_feature       = compute_feat(x=input_n_20, y=input_n_100, pred=pred_n_100.clip(0, 1), device='cuda')
@@ -1717,13 +1717,15 @@ def train_DUGAN_Previous(model, data_loader, optimizer_G, optimizer_Img_D, optim
         Img_d_loss, Img_detail = model.Image_d_loss(input_n_20, input_n_100)
         Img_d_loss.backward()
         optimizer_Img_D.step()
+        metric_logger.update(d_img_loss=Img_d_loss.item())
         metric_logger.update(**Img_detail)
             # Grad D
         optimizer_Grad_D.zero_grad()
         model.Grad_Discriminator.zero_grad()        
         Grad_d_loss, Grad_detail = model.Grad_d_loss(input_n_20, input_n_100)
         Grad_d_loss.backward()
-        optimizer_Grad_D.step()        
+        optimizer_Grad_D.step()
+        metric_logger.update(d_grad_loss=Grad_d_loss.item())
         metric_logger.update(**Grad_detail)
 
         # Generator
@@ -1732,6 +1734,7 @@ def train_DUGAN_Previous(model, data_loader, optimizer_G, optimizer_Img_D, optim
         g_loss, g_detail = model.g_loss(input_n_20, input_n_100)
         g_loss.backward()        
         optimizer_G.step()
+        metric_logger.update(g_loss=g_loss.item())
         metric_logger.update(**g_detail)
 
         metric_logger.update(lr=optimizer_G.param_groups[0]["lr"])
