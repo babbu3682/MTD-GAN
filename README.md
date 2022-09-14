@@ -1,7 +1,7 @@
 # MTD-GAN - Official Pytorch Implementation
 
 It's scheduled to be uploaded soon. We are modifying the code for easier use.
-We proposed a supervised multi-task aiding representation transfer learning network called <b>FD-Net</b>.
+We proposed a supervised multi-task aiding representation transfer learning network called <b>MTD-Net</b>.
 
 
 ## 💡 Highlights
@@ -14,7 +14,7 @@ We proposed a supervised multi-task aiding representation transfer learning netw
 
 
 ## Paper
-This repository provides the official implementation of training SMART-Net as well as the usage of the pre-trained FD-Net in the following paper:
+This repository provides the official implementation of training SMART-Net as well as the usage of the pre-trained MTD-Net in the following paper:
 
 <!-- <b>Improved performance and robustness of multi-task representation learning with consistency loss between pretexts for intracranial hemorrhage identification in head CT</b> <br/>
 [Sunggu Kyung](https://github.com/babbu3682)<sup>1</sup>, Keewon Shin, Hyunsu Jeong, Ki Duk Kim, Jooyoung Park, Kyungjin Cho, Jeong Hyun Lee, Gil-Sun Hong, and Namkug Kim <br/>
@@ -30,11 +30,11 @@ This repository provides the official implementation of training SMART-Net as we
 + PyTorch 1.8.0
 
 
-## 📦 FD-Net Framework
+## 📦 MTD-Net Framework
 ### 1. Clone the repository and install dependencies
 ```bash
-$ git clone https://github.com/babbu3682/FD-Net.git
-$ cd FD-Net/
+$ git clone https://github.com/babbu3682/MTD-Net.git
+$ cd MTD-Net/
 $ pip install -r requirements.txt
 ```
 
