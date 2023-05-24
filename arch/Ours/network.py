@@ -1785,7 +1785,7 @@ class Multi_Task_Discriminator_Skip(nn.Module):
 
         return x_enc, x_dec, x_rec
 
-# Original version...!
+# Original version...! [This]
 class MTD_GAN(nn.Module):
     def __init__(self):
         super(MTD_GAN, self).__init__()
@@ -1825,8 +1825,8 @@ class MTD_GAN(nn.Module):
         consist_loss_fake_dec = F.mse_loss(fake_dec, rec_fake_dec)
 
         consist_loss = consist_loss_real_enc + consist_loss_real_dec + consist_loss_fake_enc + consist_loss_fake_dec
-        print("D / real_enc == ", real_enc.max())
-        print("D / fake_enc == ", fake_enc.max())
+        # print("D / real_enc == ", real_enc.max())
+        # print("D / fake_enc == ", fake_enc.max())
 
         total_loss   = disc_loss + rec_loss + consist_loss
         loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
@@ -1851,7 +1851,7 @@ class MTD_GAN(nn.Module):
         pix_loss     = 50.0*self.pixel_loss(fake, y)
         edge_loss    = 50.0*self.edge_loss(fake, y)
 
-        print("G / real_enc == ", gen_enc.max())
+        # print("G / real_enc == ", gen_enc.max())
 
         total_loss   = adv_loss + pix_loss + edge_loss
         loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
@@ -1862,76 +1862,76 @@ class MTD_GAN(nn.Module):
         # return [adv_loss, pix_loss, edge_loss], loss_details               # for PCgrad
         return total_loss, loss_details
  
-# # GeM version...!
-# class MTD_GAN(nn.Module):
-#     def __init__(self):
-#         super(MTD_GAN, self).__init__()
-#         # Generator
-#         self.Generator       = FFT_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
+# GeM version...!
+class MTD_GAN_GEM(nn.Module):
+    def __init__(self):
+        super(MTD_GAN_GEM, self).__init__()
+        # Generator
+        self.Generator       = FFT_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
 
-#         # Discriminator
-#         self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
-#         # self.Discriminator   = Multi_Task_Discriminator_Skip(in_channels=1, out_channels=64)
+        # Discriminator
+        self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
+        # self.Discriminator   = Multi_Task_Discriminator_Skip(in_channels=1, out_channels=64)
         
-#         # LOSS
-#         self.gan_metric_cls  = ls_gan
-#         self.gan_metric_seg  = NDS_Loss
+        # LOSS
+        self.gan_metric_cls  = ls_gan
+        self.gan_metric_seg  = NDS_Loss
         
-#         self.pixel_loss     = CharbonnierLoss()
-#         self.edge_loss      = EdgeLoss()
+        self.pixel_loss     = CharbonnierLoss()
+        self.edge_loss      = EdgeLoss()
 
-#     # Both REC
-#     def d_loss(self, x, y):
-#         fake                             = self.Generator(x).detach()   
-#         real_enc,  real_dec,  real_rec   = self.Discriminator(y)
-#         fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
+    # Both REC
+    def d_loss(self, x, y):
+        fake                             = self.Generator(x).detach()   
+        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
+        fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
     
-#         disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
+        disc_loss    = self.gan_metric_cls(real_enc, 1.) + self.gan_metric_cls(fake_enc, 0.) + self.gan_metric_seg(real_dec, 1., x-y) + self.gan_metric_seg(fake_dec, 0., x-y)
         
-#         rec_loss_real     = F.l1_loss(real_rec, y) 
-#         rec_loss_fake     = F.l1_loss(fake_rec, fake) 
-#         rec_loss          = rec_loss_real + rec_loss_fake
+        rec_loss_real     = F.l1_loss(real_rec, y) 
+        rec_loss_fake     = F.l1_loss(fake_rec, fake) 
+        rec_loss          = rec_loss_real + rec_loss_fake
 
-#         # Consistency
-#         consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1))
-#         consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
+        # Consistency
+        consist_loss_real = F.mse_loss(real_enc, self.Discriminator.gem_pool(real_dec).flatten(1))
+        consist_loss_fake = F.mse_loss(fake_enc, self.Discriminator.gem_pool(fake_dec).flatten(1))
 
-#         consist_loss = consist_loss_real + consist_loss_fake
+        consist_loss = consist_loss_real + consist_loss_fake
 
-#         print("D / real_enc == ", real_enc.max())
-#         print("D / fake_enc == ", fake_enc.max())
+        print("D / real_enc == ", real_enc.max())
+        print("D / fake_enc == ", fake_enc.max())
 
-#         total_loss   = disc_loss + rec_loss + consist_loss
-#         loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
-#                         'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
-#                         'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
-#                         'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
-#                         'D/rec_loss_real': rec_loss_real,
-#                         'D/rec_loss_fake': rec_loss_fake,
-#                         'D/consist_loss_real': consist_loss_real,
-#                         'D/consist_loss_fake': consist_loss_fake}     
+        total_loss   = disc_loss + rec_loss + consist_loss
+        loss_details = {'D/real_enc': self.gan_metric_cls(real_enc, 1.), 
+                        'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
+                        'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
+                        'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
+                        'D/rec_loss_real': rec_loss_real,
+                        'D/rec_loss_fake': rec_loss_fake,
+                        'D/consist_loss_real': consist_loss_real,
+                        'D/consist_loss_fake': consist_loss_fake}     
 
-#         # return [disc_loss, rec_loss, consist_loss], loss_details           # for PCgrad      
-#         return total_loss, loss_details
+        # return [disc_loss, rec_loss, consist_loss], loss_details           # for PCgrad      
+        return total_loss, loss_details
     
-#     def g_loss(self, x, y):
-#         fake                    = self.Generator(x)
-#         gen_enc, gen_dec, _     = self.Discriminator(fake)
+    def g_loss(self, x, y):
+        fake                    = self.Generator(x)
+        gen_enc, gen_dec, _     = self.Discriminator(fake)
         
-#         adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
-#         pix_loss     = 50.0*self.pixel_loss(fake, y)
-#         edge_loss    = 50.0*self.edge_loss(fake, y)
+        adv_loss     = self.gan_metric_cls(gen_enc, 1.) + self.gan_metric_seg(gen_dec, 1., x-y)
+        pix_loss     = 50.0*self.pixel_loss(fake, y)
+        edge_loss    = 50.0*self.edge_loss(fake, y)
 
-#         print("G / real_enc == ", gen_enc.max())
+        print("G / real_enc == ", gen_enc.max())
 
-#         total_loss   = adv_loss + pix_loss + edge_loss
-#         loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
-#                         'G/gen_dec': self.gan_metric_seg(gen_dec, 1., x-y), 
-#                         'G/pix_loss': pix_loss,
-#                         'G/edge_loss': edge_loss}
+        total_loss   = adv_loss + pix_loss + edge_loss
+        loss_details = {'G/gen_enc': self.gan_metric_cls(gen_enc, 1.), 
+                        'G/gen_dec': self.gan_metric_seg(gen_dec, 1., x-y), 
+                        'G/pix_loss': pix_loss,
+                        'G/edge_loss': edge_loss}
                         
-#         # return [adv_loss, pix_loss, edge_loss], loss_details               # for PCgrad
-#         return total_loss, loss_details
+        # return [adv_loss, pix_loss, edge_loss], loss_details               # for PCgrad
+        return total_loss, loss_details
  
 
 
@@ -2440,6 +2440,82 @@ class Ablation_D(nn.Module):
                         'G/edge_loss': edge_loss}
                         
         return total_loss, loss_details
+
+# Ablation_D2 - MTL_D_GAN + REC Consistency loss 
+class Ablation_D2(nn.Module):
+    def __init__(self):
+        super(Ablation_D2, self).__init__()
+        # Generator
+        self.Generator       = REDCNN_Generator(in_channels=1, out_channels=32, num_layers=10, kernel_size=3, padding=1)
+
+        # Discriminator
+        # self.Discriminator   = Multi_Task_Discriminator(in_channels=1, out_channels=64)
+        self.Discriminator   = Multi_Task_Discriminator_Skip(in_channels=1, out_channels=64)
+        # self.Discriminator   = Multi_Task_Discriminator_Skip_NEW(in_channels=1, out_channels=64)
+
+        # LOSS
+        self.gan_metric      = ls_gan
+        
+        self.pixel_loss     = CharbonnierLoss()
+        self.edge_loss      = EdgeLoss()
+
+    def d_loss(self, x, y):
+        fake                             = self.Generator(x).detach()   
+        real_enc,  real_dec,  real_rec   = self.Discriminator(y)
+        fake_enc,  fake_dec,  fake_rec   = self.Discriminator(fake)
+    
+        disc_loss  = self.gan_metric(real_enc, 1.) + self.gan_metric(real_dec, 1.) + self.gan_metric(fake_enc, 0.) + self.gan_metric(fake_dec, 0.)
+
+        rec_loss_real     = F.l1_loss(real_rec, y) 
+        rec_loss_fake     = F.l1_loss(fake_rec, fake) 
+        rec_loss          = rec_loss_real + rec_loss_fake
+        
+        # Consistency
+        rec_real_enc,  rec_real_dec,  _   = self.Discriminator(real_rec.clip(0, 1))
+        rec_fake_enc,  rec_fake_dec,  _   = self.Discriminator(fake_rec.clip(0, 1))
+
+        consist_loss_real_enc = F.mse_loss(real_enc, rec_real_enc) 
+        consist_loss_real_dec = F.mse_loss(real_dec, rec_real_dec)
+        consist_loss_fake_enc = F.mse_loss(fake_enc, rec_fake_enc) 
+        consist_loss_fake_dec = F.mse_loss(fake_dec, rec_fake_dec)
+
+        consist_loss = consist_loss_real_enc + consist_loss_real_dec + consist_loss_fake_enc + consist_loss_fake_dec
+        print("D / real_enc == ", real_enc.max())
+        print("D / fake_enc == ", fake_enc.max())
+
+        total_loss   = disc_loss + rec_loss + consist_loss
+        loss_details = {'D/real_enc': self.gan_metric(real_enc, 1.), 
+                        'D/fake_enc': self.gan_metric(fake_enc, 0.), 
+                        'D/real_dec': self.gan_metric(real_dec, 1.),
+                        'D/fake_dec': self.gan_metric(fake_dec, 0.),
+                        'D/rec_loss_real': rec_loss_real,
+                        'D/rec_loss_fake': rec_loss_fake,
+                        'D/consist_loss_real_enc': consist_loss_real_enc,
+                        'D/consist_loss_real_dec': consist_loss_real_dec,
+                        'D/consist_loss_fake_enc': consist_loss_fake_enc,
+                        'D/consist_loss_fake_dec': consist_loss_fake_dec}     
+
+        return total_loss, loss_details
+        
+
+    def g_loss(self, x, y):
+        fake                    = self.Generator(x)
+        gen_enc, gen_dec, _     = self.Discriminator(fake)
+        
+        adv_loss     = self.gan_metric(gen_enc, 1.) + self.gan_metric(gen_dec, 1.)
+        pix_loss     = 50.0*self.pixel_loss(fake, y)
+        edge_loss    = 50.0*self.edge_loss(fake, y)
+
+        print("G / real_enc == ", gen_enc.max())
+
+        total_loss   = adv_loss + pix_loss + edge_loss
+        loss_details = {'G/gen_enc': self.gan_metric(gen_enc, 1.), 
+                        'G/gen_dec': self.gan_metric(gen_dec, 1.), 
+                        'G/pix_loss': pix_loss,
+                        'G/edge_loss': edge_loss}
+                        
+        return total_loss, loss_details
+ 
 
 # Ablation_E - MTL_D_GAN + Seg weight + REC Consistency loss 
 class Ablation_E(nn.Module):

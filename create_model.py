@@ -15,7 +15,7 @@ from arch.Markovian_Patch_GAN.networks import Markovian_Patch_GAN
 from arch.DUGAN.networks import DUGAN
 
     # Ours Works
-from arch.Ours.network import FDGAN, FDGAN_domain, MTD_GAN, Ablation_A, Ablation_B, Ablation_C, Ablation_D, Ablation_E
+from arch.Ours.network import FDGAN, FDGAN_domain, MTD_GAN, Ablation_A, Ablation_B, Ablation_C, Ablation_D, Ablation_D2, Ablation_E
 
 
 
@@ -70,6 +70,9 @@ def create_model(name):
 
     elif name == "Ablation_D":
         model = Ablation_D()       
+
+    elif name == "Ablation_D2":
+        model = Ablation_D2()       
 
     elif name == "Ablation_E":
         model = Ablation_E()       

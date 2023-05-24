@@ -1,5 +1,7 @@
 from create_datasets.Sinogram import *
+from create_datasets.Mayo import *
     
+
 def build_dataset(training_mode, args):
 
     if args.data_folder_dir == '/workspace/sunggu/4.Dose_img2img/datasets/[sinogram]Brain_3mm_DCM':
@@ -11,6 +13,14 @@ def build_dataset(training_mode, args):
 
         else:
             dataset, collate_fn = Sinogram_Dataset_DCM(mode=training_mode, patch_training=args.patch_training)
+
+    elif args.data_folder_dir == '/workspace/sunggu/4.Dose_img2img/datasets/MAYO_dataset':
+        if args.windowing:
+            dataset, collate_fn = MAYO_Dataset_DCM_Windowing(mode=training_mode, patch_training=args.patch_training)
+
+        else:
+            dataset, collate_fn = MAYO_Dataset_DCM(mode=training_mode, patch_training=args.patch_training)
+
 
     else: 
         raise Exception('Error...! args.data_folder_dir')
@@ -25,6 +35,15 @@ def build_dataset_test(args):
             dataset, collate_fn = TEST_Sinogram_Dataset_DCM_Windowing()
         else :
             dataset, collate_fn = TEST_Sinogram_Dataset_DCM()
+
+
+    elif args.data_folder_dir == '/workspace/sunggu/4.Dose_img2img/datasets/MAYO_dataset':
+        if args.windowing:
+            dataset, collate_fn = TEST_MAYO_Dataset_DCM_Windowing()
+
+        else:
+            dataset, collate_fn = TEST_MAYO_Dataset_DCM()
+
 
     elif args.data_folder_dir == 'TEST_Sinogram_Dataset_DCM_Clinical':        
         dataset, collate_fn = TEST_Sinogram_Dataset_DCM_Clinical()

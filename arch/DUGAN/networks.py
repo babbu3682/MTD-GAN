@@ -47,9 +47,9 @@ class DUGAN(nn.Module):
 
             total_loss             += cutmix_disc_loss + 1.0*cr_loss
 
-            print("check1 D  == ", real_enc.max())
-            print("check2 D == ", fake_enc.max())
-            print("check3 D == ", input_enc.max())
+            # print("check1 D  == ", real_enc.max())
+            # print("check2 D == ", fake_enc.max())
+            # print("check3 D == ", input_enc.max())
 
             msg_dict.update({
                 'D/gan_metric1': self.gan_metric(real_enc, 1.),
@@ -108,8 +108,8 @@ class DUGAN(nn.Module):
 
         total_loss = adv_loss + pix_loss + grad_loss
 
-        print("check1 G  == ", img_gen_enc.max())
-        print("check2 G == ", grad_gen_enc.max())
+        # print("check1 G  == ", img_gen_enc.max())
+        # print("check2 G == ", grad_gen_enc.max())
 
         msg_dict = {}
         msg_dict.update({

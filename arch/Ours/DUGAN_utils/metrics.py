@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from kornia.filters import get_gaussian_kernel2d, filter2D
+from kornia.filters import get_gaussian_kernel2d, filter2d
 
 
 def compute_ssim(img1, img2, window_size=11, reduction: str = "mean", max_val: float = 1.0, full: bool = False):

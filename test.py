@@ -142,7 +142,7 @@ def main(args):
         test_stats = test_FDGAN_Ours(model, criterion, data_loader_test, device, args.png_save_dir)    
         print("Averaged test stats: ", test_stats)
    
-    elif args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E':
+    elif args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_D2':
         test_stats = test_MTD_GAN_Ours(model, criterion, data_loader_test, device, args.png_save_dir)
         print("Averaged test stats: ", test_stats)
 
