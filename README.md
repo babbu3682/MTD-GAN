@@ -1,8 +1,8 @@
 # MTD-GAN - Official Pytorch Implementation
 
-It's scheduled to be uploaded soon. We are modifying the code for easier use.
-We proposed a supervised multi-task aiding representation transfer learning network called <b>MTD-Net</b>.
+It is currently incomplete. It will be updated in the future.
 
+<p align="center"><img width="100%" src="figures/Graphical_Abstract.png" /></p>
 
 ## 💡 Highlights
 + Develop a discriminator utilizing multi-task learning (MTL), which leverages three simultaneous tasks—restoration, image-level decision, and pixel-level decision—to transfer contextual, global, and local feedback between the real normal-dose and synthesized images to the generator.
@@ -14,12 +14,10 @@ We proposed a supervised multi-task aiding representation transfer learning netw
 + Evaluate our network with extensive experiments, including an ablation study and visual scoring using two distinct datasets of brain and abdominal CT images. Six metrics based on pixel- and feature-spaces were used, and the results indicated superior performances in both quantitative and qualitative measures compared to those of state-of-the-art denoising techniques.
 
 
-<p align="center"><img width="100%" src="figures/Graphical_Abstract.png" /></p>
 
 
 ## Paper
-This repository provides the official implementation of MTD-GAN in the following paper:
-
+This repository provides the official implementation code of MTD-GAN in the following paper:
 <b>Generative Adversarial Network with Robust Discriminator Through Multi-Task Learning for Low-Dose CT Denoising</b> <br/>
 [Sunggu Kyung](https://github.com/babbu3682)<sup>1</sup>, Jongjun Won, Seongyong Pak, Sunwoo Kim, Sangyoon Lee, Kanggil Park, Gil-Sun Hong, and Namkug Kim <br/>
 [MI2RL LAB](https://www.mi2rl.co/) <br/>
