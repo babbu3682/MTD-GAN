@@ -1,50 +1,28 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 from torchvision.models import vgg19
-import torchvision
 
 #  Reference: https://github.com/SSinyu/WGAN-VGG/blob/master/networks.py
 #  Reference: https://github.com/yyqqss09/ldct_denoising/blob/master/models.py
-#  training: padding=0 // validation: padding=1 == from official code
-
-
-# class WGAN_VGG_Generator(nn.Module):
-#     def __init__(self):
-#         super(WGAN_VGG_Generator, self).__init__()
-#         layers = [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()]
-#         for i in range(2, 8):
-#             layers.append(nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=0, bias=False))
-#             layers.append(nn.ReLU())
-            
-#         layers.extend([nn.Conv2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=0, bias=False), nn.ReLU()])
-#         self.net = nn.Sequential(*layers)
-
-#     def forward(self, x):
-#         if self.training:
-#             for i in self.net:
-#                 i.padding = (0, 0)
-#         else :                
-#             for i in self.net:
-#                 i.padding = (1, 1)            
-            
-#         out = self.net(x)
-#         return out
 
 class WGAN_VGG_Generator(nn.Module):
     def __init__(self):
         super(WGAN_VGG_Generator, self).__init__()
         layers = [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1, bias=False), nn.ReLU()]
-        for i in range(2, 8):
+        
+        for _ in range(10):
             layers.append(nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1, bias=False))
-            layers.append(nn.ReLU())
+            layers.append(nn.ReLU(inplace=True))
             
-        layers.extend([nn.Conv2d(in_channels=32, out_channels=1, kernel_size=3, stride=1, padding=1, bias=False), nn.ReLU()])
+        layers.append(nn.Conv2d(in_channels=32, out_channels=1, kernel_size=1, stride=1, padding=0, bias=False))
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):            
         out = self.net(x)
-        return out
+        return F.relu(out+x, inplace=True)
 
 class WGAN_VGG_Discriminator(nn.Module):
     def __init__(self):
@@ -64,7 +42,6 @@ class WGAN_VGG_Discriminator(nn.Module):
         self.fc1   = nn.Linear(256*8*8, 1024)
         self.lrelu = nn.LeakyReLU(0.2)
         self.fc2   = nn.Linear(1024, 1)
-        
 
     def forward(self, x):
         out = self.net(x)
@@ -87,7 +64,6 @@ class WGAN_VGG_FeatureExtractor(nn.Module):
         return out
 
 
-
 class WGAN_VGG(nn.Module):
     def __init__(self):
         super(WGAN_VGG, self).__init__()
@@ -97,9 +73,8 @@ class WGAN_VGG(nn.Module):
         self.p_criterion       = nn.MSELoss()
 
     def d_loss(self, x, y, gp=True, return_gp=False):
-        # y      = torchvision.transforms.CenterCrop(size=64)(y)  # fixed this line.
-        
-        fake   = self.Generator(x).detach()                     # fixed this line.
+
+        fake   = self.Generator(x).detach()
         d_fake = self.Discriminator(fake)
         d_real = self.Discriminator(y)
         
@@ -115,7 +90,6 @@ class WGAN_VGG(nn.Module):
         return (loss, gp_loss) if return_gp else loss
 
     def g_loss(self, x, y, perceptual=True, return_p=False):
-        # y      = torchvision.transforms.CenterCrop(size=64)(y)
         
         fake   = self.Generator(x)
         d_fake = self.Discriminator(fake)

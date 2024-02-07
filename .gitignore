@@ -112,3 +112,12 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# 제외 목록들
+checkpoints/
+Notebook/
+predictions/
+백업용/
+train.sh
+test.sh
+

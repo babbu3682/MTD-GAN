@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from monai.transforms import *
-from monai.data import Dataset
+from monai.data import Dataset, list_data_collate
 import re
 import glob
 import pydicom
@@ -11,17 +11,10 @@ import functools
 # warnings.filterwarnings(action='ignore') 
 
 
-def list_sort_nicely(l):   
-    def tryint(s):        
-        try:            
-            return int(s)        
-        except:            
-            return s
-        
-    def alphanum_key(s):
-        return [ tryint(c) for c in re.split('([0-9]+)', s) ]
-    l.sort(key=alphanum_key)    
-    return l
+def list_sort_nicely(l):
+    def convert(text): return int(text) if text.isdigit() else text
+    def alphanum_key(key): return [convert(c) for c in re.split('([0-9]+)', key)]
+    return sorted(l, key=alphanum_key)
 
 def get_pixels_hu(path):
     # pydicom version...!
@@ -58,55 +51,20 @@ def minmax_normalize(image, option=False):
     if len(np.unique(image)) != 1:  # Sometimes it cause the nan inputs...
         image -= image.min()
         image /= image.max() 
-
     if option:
         image = (image - 0.5) / 0.5  # Range -1.0 ~ 1.0   @ We do not use -1~1 range becuase there is no Tanh act.
-
     return image.astype('float32')
 
-
-# collate_fn
 def default_collate_fn(batch):
     batch = list(filter(lambda x: x is not None, batch))
     return torch.utils.data.dataloader.default_collate(batch)
 
 
-
-# Sinogram Task
-def MAYO_Dataset_DCM(mode, patch_training):
-    if mode == 'train':
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Train/quarter_3mm/*/quarter_3mm/*.IMA')) 
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Train/full_3mm/*/full_3mm/*.IMA')) 
-
-        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]            
-        print("Train [Total]  number = ", len(n_20_imgs))
-
-        if patch_training:
-            transforms = Compose(
-                [
-                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-                    AddChanneld(keys=["n_20", "n_100"]),    
-
-                    # Crop  
-                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
-                        # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
-
-                    # (15 degree rotation, vertical & horizontal flip & scaling)
-                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
-                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                    # RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
-
-                    # Normalize
-                    # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
-                    ToTensord(keys=["n_20", "n_100"]),
-                ]
-            )  
-
-        else :
-            transforms = Compose(
-                [
+def get_transforms(mode="train", type="full_patch"):
+    # Training Augmentation
+    if mode == "train":
+        if type == "full":
+            return Compose([
                     Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
                     Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
                     AddChanneld(keys=["n_20", "n_100"]),                 
@@ -115,61 +73,78 @@ def MAYO_Dataset_DCM(mode, patch_training):
                     RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
                     RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
                     RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                    # RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
                     
                     # Normalize
                     # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
                     ToTensord(keys=["n_20", "n_100"]),
-                ]
-            )       
+                ])                 
 
-
-    elif mode == 'valid':
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/20/*/*/*.dcm'))
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Sample/X/*/*/*.dcm'))        
-
-        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
-        print("Valid [Total]  number = ", len(n_20_imgs))
-
-        # CT에 맞는 Augmentation
-        transforms = Compose(
-            [
-                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-                AddChanneld(keys=["n_20", "n_100"]),     
-
-                # Normalize
-                # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
-                ToTensord(keys=["n_20", "n_100"]),
-            ]
-        )    
-
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
-
-def MAYO_Dataset_DCM_Windowing(mode, patch_training):
-    if mode == 'train':
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Train/quarter_3mm/*/quarter_3mm/*.IMA')) 
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Train/full_3mm/*/full_3mm/*.IMA')) 
-
-        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]            
-        print("Train [Total]  number = ", len(n_20_imgs))
-
-        if patch_training:
-            transforms = Compose(
-                [
+        elif type == "full_patch":
+            return Compose([
                     Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                    ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]             
-                        # Only for WGAN-VGG 
-                    # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-300.0, a_max=300.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-300, max:300]             
+                    Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                    AddChanneld(keys=["n_20", "n_100"]),    
+
+                    # Crop, patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, allow_missing_keys=False), 
+
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+
+                    # Normalize
+                    # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),     
+                    ToTensord(keys=["n_20", "n_100"]),
+                ])  
+
+        elif type == "window":
+            return Compose([
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]
+                    AddChanneld(keys=["n_20", "n_100"]),
+
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
                     
+                    # Normalize
+                    ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
+                    EnsureTyped(keys=["n_20", "n_100"]),      
+                ])           
+
+        elif type == "window_patch":
+            return Compose([
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]
                     AddChanneld(keys=["n_20", "n_100"]),    
                     
-                    # Crop  
+                    # Crop, patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
                     CropForegroundd(keys=["n_20", "n_100"], source_key="n_100", select_fn=lambda x: x > 0),
                     SpatialPadd(keys=["n_20", "n_100"], spatial_size=(64, 64)),
-                        # patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
-                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, meta_keys=None, allow_missing_keys=False), 
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, allow_missing_keys=False), 
+                        
+                    # (15 degree rotation, vertical & horizontal flip & scaling)
+                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
+                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
+                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
+
+                    # Normalize
+                    # ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
+                    EnsureTyped(keys=["n_20", "n_100"]),                    
+                ])
+
+        elif type == "window_patch_wgan_vgg":
+            return Compose([
+                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                    ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-300.0, a_max=300.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-300, max:300]
+                    AddChanneld(keys=["n_20", "n_100"]),
+                    
+                    # Crop, patch training, next(iter(loader)) output : list로 sample 만큼,,, 그 List 안에 (B, C, H, W)
+                    CropForegroundd(keys=["n_20", "n_100"], source_key="n_100", select_fn=lambda x: x > 0),
+                    SpatialPadd(keys=["n_20", "n_100"], spatial_size=(64, 64)),
+                    RandSpatialCropSamplesd(keys=["n_20", "n_100"], roi_size=(64, 64), num_samples=8, random_center=True, random_size=False, allow_missing_keys=False), 
                         
                     # (15 degree rotation, vertical & horizontal flip & scaling)
                     RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
@@ -180,104 +155,135 @@ def MAYO_Dataset_DCM_Windowing(mode, patch_training):
                     # Normalize
                     ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
                     EnsureTyped(keys=["n_20", "n_100"]),                    
-                ]
-            )  
+                ])    
 
-
-        else :
-            transforms = Compose(
-                [
-                    Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                    ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]             
-                        # Only for WGAN-VGG 
-                    # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-300.0, a_max=300.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-300, max:300]             
-                    
-                    AddChanneld(keys=["n_20", "n_100"]),                 
-
-                    # (15 degree rotation, vertical & horizontal flip & scaling)
-                    RandRotate90d(keys=["n_20", "n_100"], prob=0.1, spatial_axes=[0, 1], allow_missing_keys=False),
-                    RandFlipd(keys=["n_20", "n_100"], prob=0.1, spatial_axis=[0, 1], allow_missing_keys=False),
-                    RandRotated(keys=["n_20", "n_100"], prob=0.1, range_x=np.pi/12, range_y=np.pi/12, range_z=0.0, keep_size=True, align_corners=False, allow_missing_keys=False),
-                    # RandZoomd(keys=["n_20", "n_100"], prob=0.1, min_zoom=0.8, max_zoom=1.2, align_corners=None, keep_size=True, allow_missing_keys=False), # whole image 일때는 괜찮지만, Patch를 뜯을때 사용하면, 치명적이다...
-                    
-                    # Normalize
-                    ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
-                    EnsureTyped(keys=["n_20", "n_100"]),      
-                ]
-            )              
-
-    elif mode == 'valid':
-        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/*/quarter_3mm/*.IMA')) 
-        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/*/full_3mm/*.IMA')) 
-
-        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
-        print("Valid [Total]  number = ", len(n_20_imgs))
-
-        # CT에 맞는 Augmentation
-        transforms = Compose(
-            [
+    # Validation Augmentation
+    else:
+        if type == "full":
+            return Compose([
                 Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]             
-                    # Only for WGAN-VGG 
-                # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-300.0, a_max=300.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-300, max:300]                            
+                Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
+                AddChanneld(keys=["n_20", "n_100"]),     
 
+                # Normalize
+                # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
+                ToTensord(keys=["n_20", "n_100"]),
+            ])    
+
+        elif type == "window":
+            return Compose([
+                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]
+                AddChanneld(keys=["n_20", "n_100"]),     
+
+                # Normalize
+                # ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
+                EnsureTyped(keys=["n_20", "n_100"]),     
+            ])    
+
+        elif type == "window_foreground":
+            return Compose([
+                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]
+                AddChanneld(keys=["n_20", "n_100"]),     
+
+                CropForegroundd(keys=["n_20", "n_100"], source_key="n_100", select_fn=lambda x: x > 0),
+
+                # Normalize
+                ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
+                EnsureTyped(keys=["n_20", "n_100"]),     
+            ])    
+
+        elif type == "window_wgan_vgg":
+            return Compose([
+                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
+                ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-300.0, a_max=300.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-300, max:300]
                 AddChanneld(keys=["n_20", "n_100"]),     
 
                 # Normalize
                 ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
                 EnsureTyped(keys=["n_20", "n_100"]),     
-            ]
-        )    
+            ])    
+
+         
+ 
+
+# Sinogram Task
+def MAYO_Dataset_DCM(mode, type='window'):
+    if mode == 'train':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Train/quarter_3mm/*/quarter_3mm/*.IMA')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Valid/quarter_3mm/*/quarter_3mm/*.IMA'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Train/full_3mm/*/full_3mm/*.IMA')) + list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Valid/full_3mm/*/full_3mm/*.IMA'))
+        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
+        transforms = get_transforms(mode='train', type=type)
+
+        if type == 'full_patch' or type == 'window_patch' or type == 'window_wgan_vgg':
+            return Dataset(data=files, transform=transforms), list_data_collate
+        else:
+            return Dataset(data=files, transform=transforms), default_collate_fn        
+
+    elif mode == 'valid':
+        n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Sample/quarter_3mm/*/quarter_3mm/*.IMA'))
+        n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Sample/full_3mm/*/full_3mm/*.IMA'))
+        # n_20_imgs   = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/*/quarter_3mm/*.IMA'))
+        # n_100_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/*/full_3mm/*.IMA'))
+
+        files = [{"n_20": n_20, "n_100": n_100} for n_20, n_100 in zip(n_20_imgs, n_100_imgs)]
+        transforms = get_transforms(mode='valid', type=type)
+
+        return Dataset(data=files, transform=transforms), default_collate_fn        
 
 
-    return Dataset(data=files, transform=transforms), default_collate_fn
 
+# TEST Sinogram Task
+def TEST_MAYO_Dataset_DCM(mode, type):
+    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/*/quarter_3mm/*.IMA'))
+    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/*/full_3mm/*.IMA'))
 
+    # low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/*/quarter_3mm/L506_QD_3_1.CT.0003.0043*.IMA')) # A
+    # high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/*/full_3mm/L506_FD_3_1.CT.0001.0043*.IMA'))
 
-
-# TEST   Sinogram Task
-def TEST_MAYO_Dataset_DCM():
-    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
-    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
+    # low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/*/quarter_3mm/L506_QD_3_1.CT.0003.0036*.IMA')) # B
+    # high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/*/full_3mm/L506_FD_3_1.CT.0001.0036*.IMA'))
 
     files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
-    print("TEST [Total]  number = ", len(low_imgs))
-
-    transforms = Compose(
-        [
-            Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-            Lambdad(keys=["n_20", "n_100"], func=dicom_normalize),
-            AddChanneld(keys=["n_20", "n_100"]),         
-
-            # Normalize
-            # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                         
-            ToTensord(keys=["n_20", "n_100"]),
-        ]
-    )        
+    transforms = get_transforms(mode=mode, type=type)
 
     return Dataset(data=files, transform=transforms), default_collate_fn
 
-def TEST_MAYO_Dataset_DCM_Windowing():
-    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/*/quarter_3mm/*.IMA')) 
-    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/*/full_3mm/*.IMA')) 
+def TEST_MAYO_Dataset_DCM_A(mode, type):
+    low_imgs  = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/L506/quarter_3mm/L506_QD_3_1.CT.0003.0036.2015.12.22.20.45.42.541197.358791585.IMA'])
+    high_imgs = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/L506/full_3mm/L506_FD_3_1.CT.0001.0036.2015.12.22.20.19.39.34094.358584919.IMA'])
 
     files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
-    print("TEST [Total]  number = ", len(low_imgs))
-
-    transforms = Compose(
-        [
-            Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-            ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-160.0, a_max=240.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-160, max:240]             
-                # Only for WGAN-VGG 
-            # ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=-300.0, a_max=300.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:-300, max:300]             
-
-            AddChanneld(keys=["n_20", "n_100"]),         
-
-            # Normalize
-            ScaleIntensityd(keys=["n_20", "n_100"], channel_wise=True),
-            EnsureTyped(keys=["n_20", "n_100"]),     
-        ]
-    )        
+    transforms = get_transforms(mode=mode, type=type)
 
     return Dataset(data=files, transform=transforms), default_collate_fn
 
+def TEST_MAYO_Dataset_DCM_B(mode, type):
+    low_imgs  = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/L506/quarter_3mm/L506_QD_3_1.CT.0003.0028.2015.12.22.20.45.42.541197.358791393.IMA'])
+    high_imgs = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/L506/full_3mm/L506_FD_3_1.CT.0001.0028.2015.12.22.20.19.39.34094.358584727.IMA'])
+
+    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
+    transforms = get_transforms(mode=mode, type=type)
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
+
+def TEST_MAYO_Dataset_DCM_C(mode, type):
+    low_imgs  = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/L506/quarter_3mm/L506_QD_3_1.CT.0003.0031.2015.12.22.20.45.42.541197.358791465.IMA'])
+    high_imgs = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/L506/full_3mm/L506_FD_3_1.CT.0001.0031.2015.12.22.20.19.39.34094.358584799.IMA'])
+
+    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
+    transforms = get_transforms(mode=mode, type=type)
+
+    return Dataset(data=files, transform=transforms), default_collate_fn
+
+
+# TEST Sinogram Task
+def TEST_MAYO_Dataset_DCM_TEST(mode, type):
+    low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/quarter_3mm/*/quarter_3mm/*.IMA'))
+    high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/MAYO_dataset/Test/full_3mm/*/full_3mm/*.IMA'))
+
+    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
+    transforms = get_transforms(mode=mode, type=type)
+
+    return Dataset(data=files, transform=transforms), default_collate_fn

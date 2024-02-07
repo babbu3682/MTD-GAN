@@ -124,7 +124,12 @@ def _cov(m: torch.Tensor, rowvar: bool = True) -> torch.Tensor:
     fact = 1.0 / (m.size(1) - 1)
     m = m - torch.mean(m, dim=1, keepdim=True)
     mt = m.t()
-    return fact * m.matmul(mt).squeeze()
+    
+    # batch가 1일때 적용
+    if m.size(0) == 1:
+        return fact * m.matmul(mt)
+    else: 
+        return fact * m.matmul(mt).squeeze()
 
 
 def _compute_statistics(samples: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:

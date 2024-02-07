@@ -3,92 +3,72 @@ import argparse
 import datetime
 import time
 import json
-from pathlib import Path
 import random
 import torch
 import numpy as np
-
+from torch.utils.tensorboard import SummaryWriter
+from collections import defaultdict
 import utils
-from create_datasets.prepare_datasets import build_dataset
-from create_model import create_model
-from lr_scheduler import create_scheduler
-from optimizers import create_optim
-from losses import create_criterion
+from dataloaders_original import get_train_dataloader
+from models import get_model
+from schedulers import get_scheduler
+from optimizers import get_optimizer
+from losses import get_loss
 from engine import *
-from module.pcgrad import PCGrad
+from module.weight_methods import WeightMethods
 
 
-def fix_optimizer(optimizer):
-    # Optimizer Error fix...!
-    for state in optimizer.state.values():
-        for k, v in state.items():
-            if torch.is_tensor(v):
-                state[k] = v.cuda()
-
-def str2bool(v):
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('FD-GAN Deep-Learning Train and Test script', add_help=False)
+    parser = argparse.ArgumentParser('MTD-GAN Deep-Learning Train script', add_help=False)
 
     # Dataset parameters
-    # parser.add_argument('--data-set', default='CIFAR10', type=str, help='dataset name')    
-    parser.add_argument('--data-folder-dir', default="/workspace/sunggu/1.Hemorrhage/4.Dose_img2img/datasets/[sinogram]Brain_3mm_DCM", type=str, help='dataset folder dirname')    
+    parser.add_argument('--dataset',               default="amc", type=str, help='dataset name')
+    parser.add_argument('--dataset-type-train',    default="window_patch", type=str, help='dataset type train name')
+    parser.add_argument('--dataset-type-valid',    default="window_patch", type=str, help='dataset type valid name')
+    parser.add_argument('--batch-size',            default=72, type=int)
+    parser.add_argument('--train-num-workers',     default=10, type=int)
+    parser.add_argument('--valid-num-workers',     default=10, type=int)
 
     # Model parameters
-    parser.add_argument('--model-name',      default='Sequence_SkipHidden_Unet_ALL',  type=str, help='model name')    
-    parser.add_argument('--criterion',       default='Sequence_SkipHidden_Unet_loss', type=str, help='criterion name')    
-    parser.add_argument('--pcgrad',          default="FALSE",   type=str2bool, help='pcgrad for multi-task learning')    
-
-    # Training Option
-    parser.add_argument('--patch_training',  default="FALSE",   type=str2bool, help='patch_training')    
-    parser.add_argument('--multiple_GT',     default="FALSE",   type=str2bool, help='multiple ground truth')  
-    parser.add_argument('--windowing',       default="FALSE",   type=str2bool, help='apply windowing')  
-
-    # DataLoader setting
-    parser.add_argument('--batch-size',  default=72, type=int)
-    parser.add_argument('--num_workers', default=10, type=int)
-    parser.add_argument('--pin-mem',    action='store_true', help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
+    parser.add_argument('--model',                 default='Sequence_SkipHidden_Unet_ALL',  type=str, help='model name')    
+    parser.add_argument('--loss',                  default='Sequence_SkipHidden_Unet_loss', type=str, help='loss name')    
+    parser.add_argument('--method',                default='', help='multi-task weighting name')
 
     # Optimizer parameters
-    parser.add_argument('--optimizer', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "AdamW"')
+    parser.add_argument('--optimizer',             default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "AdamW"')
     
     # Learning rate and schedule and Epoch parameters
-    parser.add_argument('--lr-scheduler', default='poly_lr', type=str, metavar='lr_scheduler', help='lr_scheduler (default: "poly_learning_rate"')
-    parser.add_argument('--epochs', default=1000, type=int, help='Upstream 1000 epochs, Downstream 500 epochs')  
-    parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='start epoch')
-    parser.add_argument('--warmup-epochs', type=int, default=10, metavar='N', help='epochs to warmup LR, if scheduler supports')
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-4)')
-    parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
+    parser.add_argument('--scheduler',             default='poly_lr', type=str, metavar='scheduler', help='scheduler (default: "poly_learning_rate"')
+    parser.add_argument('--epochs',                default=1000, type=int, help='Upstream 1000 epochs, Downstream 500 epochs')  
+    parser.add_argument('--warmup-epochs',         default=10, type=int, metavar='N', help='epochs to warmup LR, if scheduler supports')
+    parser.add_argument('--lr',                    default=5e-4, type=float, metavar='LR', help='learning rate (default: 5e-4)')
+    parser.add_argument('--min-lr',                default=1e-5, type=float, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
 
     # DataParrel or Single GPU train
-    parser.add_argument('--multi-gpu-mode',       default='DataParallel', choices=['DataParallel', 'Single'], type=str, help='multi-gpu-mode')          
-    parser.add_argument('--device',               default='cuda', help='device to use for training / testing')
-    parser.add_argument('--cuda-device-order',    default='PCI_BUS_ID', type=str, help='cuda_device_order')
-    parser.add_argument('--cuda-visible-devices', default='0', type=str, help='cuda_visible_devices')
-
-    # Continue Training
-    parser.add_argument('--resume',           default='',  help='resume from checkpoint')  # '' = None
-    parser.add_argument('--from-pretrained',  default='',  help='pre-trained from checkpoint')
+    parser.add_argument('--multi-gpu-mode',        default='DataParallel', choices=['Single', 'DataParallel'], type=str, help='multi-gpu-mode')          
+    parser.add_argument('--device',                default='cuda', help='device to use for training / testing')
     
     # Validation setting
-    parser.add_argument('--print-freq', default=10, type=int, metavar='N', help='print frequency (default: 10)')
-    parser.add_argument('--save-checkpoint-every', default=2, type=int, help='save the checkpoints every n epochs')  
+    parser.add_argument('--print-freq',            default=10, type=int, metavar='N', help='print frequency (default: 10)')
+    parser.add_argument('--save-checkpoint-every', default=1,  type=int, help='save the checkpoints every n epochs')  
 
     # Prediction and Save setting
-    parser.add_argument('--checkpoint-dir', default='', help='path where to save checkpoint or output')
-    parser.add_argument('--png-save-dir',   default='', help='path where to prediction PNG save')
+    parser.add_argument('--checkpoint-dir',        default='', help='path where to save checkpoint or output')
+    parser.add_argument('--save-dir',              default='', help='path where to prediction PNG save')
+
+    # Continue Training
+    parser.add_argument('--from-pretrained',       default='',  help='pre-trained from checkpoint')
+    parser.add_argument('--resume',                default='',  help='resume from checkpoint')  # '' = None
+
+    # Memo
+    parser.add_argument('--memo',                  default='', help='memo for script')
 
     return parser
 
     
 # fix random seeds for reproducibility
-random_seed = 42
+random_seed = 2024
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed) 
@@ -98,65 +78,69 @@ np.random.seed(random_seed)
 random.seed(random_seed)
 
 
-
-
 def main(args):
-
+    start_epoch = 0
     utils.print_args(args)
     device = torch.device(args.device)
+    print("cpu == ", os.cpu_count())
+    # Dataloader
+    data_loader_train, data_loader_valid = get_train_dataloader(name=args.dataset, args=args)   
 
-    print("Loading dataset ....")
-    dataset_train, collate_fn_train = build_dataset(training_mode='train',  args=args)   
-    dataset_valid, collate_fn_valid = build_dataset(training_mode='valid',  args=args)
+    # Model
+    model = get_model(name=args.model)
 
-    data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True,   pin_memory=args.pin_mem, drop_last=True,  collate_fn=collate_fn_train)
-    data_loader_valid = torch.utils.data.DataLoader(dataset_valid, batch_size=1,               num_workers=args.num_workers, shuffle=True,   pin_memory=args.pin_mem, drop_last=False, collate_fn=collate_fn_valid) 
+    # Multi-GPU
+    if args.multi_gpu_mode == 'DataParallel':
+        if args.model == 'WGAN_VGG' or args.model == 'MAP_NN' or args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
+            model.Generator             = torch.nn.DataParallel(model.Generator)         
+            model.Discriminator         = torch.nn.DataParallel(model.Discriminator)
+            model.Generator.to(device)   
+            model.Discriminator.to(device)   
+        elif args.model == 'DU_GAN':
+            model.Generator             = torch.nn.DataParallel(model.Generator)         
+            model.Image_Discriminator   = torch.nn.DataParallel(model.Image_Discriminator)
+            model.Grad_Discriminator    = torch.nn.DataParallel(model.Grad_Discriminator)
+            model.Generator.to(device)   
+            model.Image_Discriminator.to(device)   
+            model.Grad_Discriminator.to(device)   
+        else :
+            model = torch.nn.DataParallel(model)
+            model.to(device)            
+    else :
+        model.to(device)
 
-    # Select Loss
-    print(f"Creating criterion: {args.criterion}")
-    criterion = create_criterion(name=args.criterion)
-
-    # Select Model
-    print(f"Creating model: {args.model_name}")
-    print(f"Pretrained model: {args.from_pretrained}")
-    model = create_model(name=args.model_name)
-    print(model)
-
+    # Loss
+    loss = get_loss(name=args.loss)
 
     # Optimizer & LR Schedule
-    if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_D2':
-        optimizer_G    = create_optim(name=args.optimizer, model=model.Generator, args=args)
-        optimizer_D    = create_optim(name=args.optimizer, model=model.Discriminator, args=args)
-        lr_scheduler_G = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
-        lr_scheduler_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_D, args=args)
-        
-        if (args.pcgrad) and (not args.resume):
-            optimizer_G = PCGrad(optimizer_G)
-            optimizer_D = PCGrad(optimizer_D)
-
-    elif args.model_name == 'Markovian_Patch_GAN':
-        optimizer_G    = create_optim(name=args.optimizer, model=model.Generator, args=args); args.lr = args.lr * 4; 
-        optimizer_D    = create_optim(name=args.optimizer, model=model.Discriminator, args=args)
-        lr_scheduler_G = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
-        lr_scheduler_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_D, args=args)        
-    elif args.model_name == 'DU_GAN':
-        optimizer_G         = create_optim(name=args.optimizer,model=model.Generator, args=args)
-        optimizer_Img_D     = create_optim(name=args.optimizer,model=model.Image_Discriminator, args=args)
-        optimizer_Grad_D    = create_optim(name=args.optimizer,model=model.Grad_Discriminator, args=args)
-        lr_scheduler_G      = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
-        lr_scheduler_Img_D  = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Img_D, args=args)
-        lr_scheduler_Grad_D = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Grad_D, args=args)
-    elif args.model_name == 'FDGAN' or args.model_name == "FDGAN_domain":
-        optimizer_G             = create_optim(name=args.optimizer,model=model.Generator, args=args)
-        optimizer_Image_D       = create_optim(name=args.optimizer,model=model.Image_Discriminator, args=args)
-        optimizer_Fourier_D     = create_optim(name=args.optimizer,model=model.Fourier_Discriminator, args=args)
-        lr_scheduler_G          = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_G, args=args)
-        lr_scheduler_Image_D    = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Image_D, args=args)
-        lr_scheduler_Fourier_D  = create_scheduler(name=args.lr_scheduler, optimizer=optimizer_Fourier_D, args=args)                  
+    if args.model == 'WGAN_VGG' or args.model == 'MAP_NN' or args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
+        if (args.method) and (not args.resume):
+            # Weight Method such as PCGrad, CAGrad, MGDA (Ref: https://github.com/AvivNavon/nash-mtl/tree/7cc1694a276ca6f2f9426ab18b8698c786bff4f0)
+            weight_methods_parameters = defaultdict(dict)
+            weight_methods_parameters.update(dict(nashmtl=dict(update_weights_every=1, optim_niter=20), stl=dict(main_task=0), cagrad=dict(c=0.4), dwa=dict(temp=2.0)))
+            weight_method_D = WeightMethods(method=args.method, n_tasks=3, device=device, **weight_methods_parameters[args.method])
+            optimizer_D = torch.optim.AdamW([
+                dict(params=model.Discriminator.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=5e-4, amsgrad=False),
+                dict(params=weight_method_D.parameters(),     lr=0.025,   betas=(0.9, 0.999), eps=1e-08, weight_decay=5e-4, amsgrad=False)])
+            scheduler_D = get_scheduler(name=args.scheduler, optimizer=optimizer_D, args=args)
+            optimizer_G = get_optimizer(name=args.optimizer, model=model.Generator, args=args)
+            scheduler_G = get_scheduler(name=args.scheduler, optimizer=optimizer_G, args=args)
+        else: 
+            weight_method_D = None
+            optimizer_D = get_optimizer(name=args.optimizer, model=model.Discriminator, args=args)
+            scheduler_D = get_scheduler(name=args.scheduler, optimizer=optimizer_D, args=args)
+            optimizer_G = get_optimizer(name=args.optimizer, model=model.Generator, args=args)
+            scheduler_G = get_scheduler(name=args.scheduler, optimizer=optimizer_G, args=args)
+    elif args.model == 'DU_GAN':
+        optimizer_Img_D  = get_optimizer(name=args.optimizer,model=model.Image_Discriminator, args=args)
+        scheduler_Img_D  = get_scheduler(name=args.scheduler, optimizer=optimizer_Img_D, args=args)
+        optimizer_Grad_D = get_optimizer(name=args.optimizer,model=model.Grad_Discriminator, args=args)
+        scheduler_Grad_D = get_scheduler(name=args.scheduler, optimizer=optimizer_Grad_D, args=args)
+        optimizer_G      = get_optimizer(name=args.optimizer,model=model.Generator, args=args)
+        scheduler_G      = get_scheduler(name=args.scheduler, optimizer=optimizer_G, args=args)        
     else : 
-        optimizer    = create_optim(name=args.optimizer,model=model, args=args)
-        lr_scheduler = create_scheduler(name=args.lr_scheduler, optimizer=optimizer, args=args)
-
+        optimizer = get_optimizer(name=args.optimizer,model=model, args=args)
+        scheduler = get_scheduler(name=args.scheduler, optimizer=optimizer, args=args)
 
     # Resume
     if args.resume:
@@ -164,198 +148,154 @@ def main(args):
         checkpoint = torch.load(args.resume, map_location='cpu')
         checkpoint['model_state_dict'] = {k.replace('.module', ''):v for k,v in checkpoint['model_state_dict'].items()} # fix loading multi-gpu 
         model.load_state_dict(checkpoint['model_state_dict'])   
-        args.start_epoch = checkpoint['epoch'] + 1      
-        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_D2':
-            optimizer_G.load_state_dict(checkpoint['optimizer_G'])
-            optimizer_D.load_state_dict(checkpoint['optimizer_D'])
-            lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])    
-            lr_scheduler_D.load_state_dict(checkpoint['lr_scheduler_D'])      
-            # Optimizer Error fix...!
-            fix_optimizer(optimizer_G)
-            fix_optimizer(optimizer_D)
+        start_epoch = checkpoint['epoch'] + 1 
 
-            if args.pcgrad:
-                optimizer_G = PCGrad(optimizer_G)
-                optimizer_D = PCGrad(optimizer_D)
-                            
-        elif args.model_name == 'DU_GAN':
+        if args.model == 'WGAN_VGG' or args.model == 'MAP_NN' or args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
+            optimizer_D.load_state_dict(checkpoint['optimizer_D'])
+            scheduler_D.load_state_dict(checkpoint['scheduler_D'])
             optimizer_G.load_state_dict(checkpoint['optimizer_G'])
+            scheduler_G.load_state_dict(checkpoint['scheduler_G'])
+            utils.fix_optimizer(optimizer_D) # Optimizer Error fix...!
+            utils.fix_optimizer(optimizer_G)
+        elif args.model == 'DU_GAN':
             optimizer_Img_D.load_state_dict(checkpoint['optimizer_Img_D'])
+            scheduler_Img_D.load_state_dict(checkpoint['scheduler_Img_D'])
             optimizer_Grad_D.load_state_dict(checkpoint['optimizer_Grad_D'])
-            lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])    
-            lr_scheduler_Img_D.load_state_dict(checkpoint['lr_scheduler_Img_D'])        
-            lr_scheduler_Grad_D.load_state_dict(checkpoint['lr_scheduler_Grad_D'])      
-            # Optimizer Error fix...!
-            fix_optimizer(optimizer_G)
-            fix_optimizer(optimizer_Img_D)
-            fix_optimizer(optimizer_Grad_D)
-        elif args.model_name == 'FDGAN' or args.model_name == "FDGAN_domain":              
+            scheduler_Grad_D.load_state_dict(checkpoint['scheduler_Grad_D'])
             optimizer_G.load_state_dict(checkpoint['optimizer_G'])
-            optimizer_Image_D.load_state_dict(checkpoint['optimizer_Image_D'])
-            optimizer_Fourier_D.load_state_dict(checkpoint['optimizer_Fourier_D'])
-            lr_scheduler_G.load_state_dict(checkpoint['lr_scheduler_G'])
-            lr_scheduler_Image_D.load_state_dict(checkpoint['lr_scheduler_Image_D'])
-            lr_scheduler_Fourier_D.load_state_dict(checkpoint['lr_scheduler_Fourier_D'])
-            # Optimizer Error fix...!
-            fix_optimizer(optimizer_G)
-            fix_optimizer(optimizer_Image_D)
-            fix_optimizer(optimizer_Fourier_D)   
+            scheduler_G.load_state_dict(checkpoint['scheduler_G'])    
+            utils.fix_optimizer(optimizer_Img_D)
+            utils.fix_optimizer(optimizer_Grad_D)
+            utils.fix_optimizer(optimizer_G)
         else :
             optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            # Optimizer Error fix...!
-            fix_optimizer(optimizer)
+            scheduler.load_state_dict(checkpoint['scheduler'])
+            utils.fix_optimizer(optimizer)
 
-
-    # Multi-GPU
-    if args.multi_gpu_mode == 'DataParallel':
-        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_D2':
-            model.Generator             = torch.nn.DataParallel(model.Generator)         
-            model.Discriminator         = torch.nn.DataParallel(model.Discriminator)
-            model.Generator.to(device)   
-            model.Discriminator.to(device)   
-        elif args.model_name == 'DU_GAN':
-            model.Generator             = torch.nn.DataParallel(model.Generator)         
-            model.Image_Discriminator   = torch.nn.DataParallel(model.Image_Discriminator)
-            model.Grad_Discriminator    = torch.nn.DataParallel(model.Grad_Discriminator)
-            model.Generator.to(device)   
-            model.Image_Discriminator.to(device)   
-            model.Grad_Discriminator.to(device)   
-        elif args.model_name == 'FDGAN' or args.model_name == "FDGAN_domain":
-            model.Generator             = torch.nn.DataParallel(model.Generator)         
-            model.Image_Discriminator   = torch.nn.DataParallel(model.Image_Discriminator)
-            model.Fourier_Discriminator = torch.nn.DataParallel(model.Fourier_Discriminator)
-            model.Generator.to(device)   
-            model.Image_Discriminator.to(device)   
-            model.Fourier_Discriminator.to(device)   
-        else :
-            model = torch.nn.DataParallel(model)
-            model.to(device)            
-    else :
-        model.to(device)
-
+    # Tensorboard
+    tensorboard = SummaryWriter(args.checkpoint_dir + '/runs')
+    print('Writing Tensorboard logs to ', args.checkpoint_dir + '/runs')
 
     # Etc traing setting
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
 
-    # Whole LOOP Train & Valid #####
-    for epoch in range(args.start_epoch, args.epochs):
+    # Whole Loop Train & Valid 
+    for epoch in range(start_epoch, args.epochs):
 
         # CNN based
             # Previous
-        if args.model_name == 'RED_CNN' or args.model_name == 'ED_CNN': 
-            train_stats = train_CNN_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.patch_training, args.print_freq, args.batch_size)
+        if args.model == 'RED_CNN' or args.model == 'ED_CNN': 
+            train_stats = train_CNN_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_CNN_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
+            valid_stats = valid_CNN_Based_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
-        # Transformer based
-        elif args.model_name == 'Restormer' or args.model_name == 'CTformer': 
-            train_stats = train_Transformer_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.patch_training, args.print_freq, args.batch_size)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)   
+
+            # Transformer based
+        elif args.model == 'Restormer' or args.model == 'CTformer': 
+            train_stats = train_TR_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_Transformer_Based_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)
+            valid_stats = valid_TR_Based_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
-
-
-            # Ours
-        elif args.model_name == 'ResFFT_LFSPADE' or args.model_name == 'ResFFT_Freq_SPADE_Att' or args.model_name == 'ResFFT_Freq_SPADE_Att_window':
-            train_stats = train_CNN_Based_Ours(model, criterion, data_loader_train, optimizer, device, epoch, args.patch_training, args.criterion)
-            valid_stats = valid_CNN_Based_Ours(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.criterion)
-
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)          
 
         # GAN based
             # Previous        
-        elif args.model_name == 'WGAN_VGG': 
-            train_stats = train_WGAN_VGG_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
+        elif args.model == 'WGAN_VGG': 
+            train_stats = train_WGAN_VGG_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_WGAN_VGG_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)                        
+            valid_stats = valid_WGAN_VGG_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)            
 
-        elif args.model_name == 'MAP_NN': 
-            train_stats = train_MAP_NN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
+        elif args.model == 'MAP_NN': 
+            train_stats = train_MAP_NN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_MAP_NN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
+            valid_stats = valid_MAP_NN_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)            
 
-        elif args.model_name == 'Markovian_Patch_GAN': 
-            train_stats = train_Markovian_Patch_GAN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
+        elif args.model == 'DU_GAN': 
+            train_stats = train_DUGAN_Previous(model, data_loader_train, optimizer_G, optimizer_Img_D, optimizer_Grad_D, device, epoch, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_Markovian_Patch_GAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
+            valid_stats = valid_DUGAN_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)            
 
-        elif args.model_name == 'DU_GAN': 
-            train_stats = train_DUGAN_Previous(model, data_loader_train, optimizer_G, optimizer_Img_D, optimizer_Grad_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
+        # DN based
+            # Previous        
+        elif args.model == 'DDPM' or args.model == 'DDIM' or args.model == 'PNDM' or args.model == 'DPM':
+            train_stats = train_DN_Previous(model, data_loader_train, optimizer, device, epoch, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_DUGAN_Previous(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
+            valid_stats = valid_DN_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)          
 
             # Ours
-        elif args.model_name == "FDGAN" or args.model_name == "FDGAN_domain":
-            train_stats = train_FDGAN_Ours(model, data_loader_train, optimizer_G, optimizer_Image_D, optimizer_Fourier_D, device, epoch, args.patch_training, args.print_freq, args.batch_size)            
+        elif args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
+            train_stats = train_MTD_GAN_Ours(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.print_freq, args.batch_size, weight_method_D)
             print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_FDGAN_Ours(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
+            valid_stats = valid_MTD_GAN_Ours(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)
+        
+        # LR scheduler update
+        if args.model == 'WGAN_VGG' or args.model == 'MAP_NN' or args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
+            scheduler_G.step(epoch)
+            scheduler_D.step(epoch)
+        elif args.model == 'DU_GAN':            
+            scheduler_G.step(epoch)
+            scheduler_Img_D.step(epoch)
+            scheduler_Grad_D.step(epoch)
+        else:    
+            scheduler.step(epoch)            
 
-
-        elif args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_D2':
-            train_stats = train_MTD_GAN_Ours(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.patch_training, args.print_freq, args.batch_size, args.pcgrad)
-            print("Averaged train_stats: ", train_stats)
-            valid_stats = valid_MTD_GAN_Ours(model, criterion, data_loader_valid, device, epoch, args.png_save_dir, args.print_freq, args.batch_size)
-            print("Averaged valid_stats: ", valid_stats)
-
-        else :
-            pass
-            
-
-
-        # Save & Prediction png
+        # Save checkpoint & Prediction png
         if epoch % args.save_checkpoint_every == 0:
             checkpoint_path = args.checkpoint_dir + '/epoch_' + str(epoch) + '_checkpoint.pth'
-
-            if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_D2':
-                if args.pcgrad:
-                    torch.save({
-                        'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
-                        'optimizer_G': optimizer_G.optimizer.state_dict(), 
-                        'optimizer_D': optimizer_D.optimizer.state_dict(), 
-                        'lr_scheduler_G': lr_scheduler_G.state_dict(),
-                        'lr_scheduler_D': lr_scheduler_D.state_dict(),
-                        'epoch': epoch,
-                        'args': args,
-                    }, checkpoint_path)    
-                else :                
-                    torch.save({
-                        'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
-                        'optimizer_G': optimizer_G.state_dict(), 
-                        'optimizer_D': optimizer_D.state_dict(), 
-                        'lr_scheduler_G': lr_scheduler_G.state_dict(),
-                        'lr_scheduler_D': lr_scheduler_D.state_dict(),
-                        'epoch': epoch,
-                        'args': args,
-                    }, checkpoint_path)               
-
-            elif args.model_name == 'DU_GAN':
+            
+            if args.model == 'WGAN_VGG' or args.model == 'MAP_NN' or args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
                 torch.save({
                     'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
-                    'optimizer_G': optimizer_G.state_dict(), 
-                    'optimizer_Img_D': optimizer_Img_D.state_dict(), 
-                    'optimizer_Grad_D': optimizer_Grad_D.state_dict(), 
-                    'lr_scheduler_G': lr_scheduler_G.state_dict(),
-                    'lr_scheduler_Img_D': lr_scheduler_Img_D.state_dict(),
-                    'lr_scheduler_Grad_D': lr_scheduler_Grad_D.state_dict(),
+                    'optimizer_D': optimizer_D.state_dict(),
+                    'scheduler_D': scheduler_D.state_dict(),
+                    'optimizer_G': optimizer_G.state_dict(),
+                    'scheduler_G': scheduler_G.state_dict(),
                     'epoch': epoch,
                     'args': args,
-                }, checkpoint_path)   
-
-            elif args.model_name == 'FDGAN' or args.model_name == "FDGAN_domain":
+                }, checkpoint_path)
+           
+            elif args.model == 'DU_GAN':
                 torch.save({
                     'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
-                    'optimizer_G': optimizer_G.state_dict(), 
-                    'optimizer_Image_D': optimizer_Image_D.state_dict(), 
-                    'optimizer_Fourier_D': optimizer_Fourier_D.state_dict(), 
-                    'lr_scheduler_G': lr_scheduler_G.state_dict(),
-                    'lr_scheduler_Image_D': lr_scheduler_Image_D.state_dict(),
-                    'lr_scheduler_Fourier_D': lr_scheduler_Fourier_D.state_dict(),
+                    'optimizer_Img_D': optimizer_Img_D.state_dict(),
+                    'scheduler_Img_D': scheduler_Img_D.state_dict(),
+                    'optimizer_Grad_D': optimizer_Grad_D.state_dict(),
+                    'scheduler_Grad_D': scheduler_Grad_D.state_dict(),
+                    'optimizer_G': optimizer_G.state_dict(),
+                    'scheduler_G': scheduler_G.state_dict(),
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)   
@@ -364,48 +304,39 @@ def main(args):
                 torch.save({
                     'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),  # Save only Single Gpu mode
                     'optimizer': optimizer.state_dict(), 
-                    'lr_scheduler': lr_scheduler.state_dict(), 
+                    'scheduler': scheduler.state_dict(), 
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)                                        
 
+        # Log & Save
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'valid_{k}': v for k, v in valid_stats.items()},
                      'epoch': epoch}
 
-        if args.checkpoint_dir:
-            with open(args.checkpoint_dir + "/log.txt", "a") as f:
-                f.write(json.dumps(log_stats) + "\n")
-
-        if args.model_name == 'WGAN_VGG' or args.model_name == 'MAP_NN' or args.model_name == 'Markovian_Patch_GAN' or args.model_name == 'MTD_GAN' or args.model_name == 'Ablation_A' or args.model_name == 'Ablation_B' or args.model_name == 'Ablation_C' or args.model_name == 'Ablation_D' or args.model_name == 'Ablation_E' or args.model_name == 'Ablation_D2':
-            lr_scheduler_G.step(epoch)
-            lr_scheduler_D.step(epoch)
-        elif args.model_name == 'DU_GAN':            
-            lr_scheduler_G.step(epoch)
-            lr_scheduler_Img_D.step(epoch)
-            lr_scheduler_Grad_D.step(epoch)      
-        elif args.model_name == 'FDGAN' or args.model_name == "FDGAN_domain":            
-            lr_scheduler_G.step(epoch)
-            lr_scheduler_Image_D.step(epoch)
-            lr_scheduler_Fourier_D.step(epoch)                                                                           
-        else:    
-            lr_scheduler.step(epoch)
-
+        with open(args.checkpoint_dir + "/log.txt", "a") as f:
+            f.write(json.dumps(log_stats) + "\n")
 
     # Finish
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    tensorboard.close()
+    total_time_str = str(datetime.timedelta(seconds=int(time.time()-start_time)))
     print('Training time {}'.format(total_time_str))
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('FD-GAN training and evaluation script', parents=[get_args_parser()])
+    parser = argparse.ArgumentParser('MTD-GAN training script', parents=[get_args_parser()])
     args = parser.parse_args()
 
-    if args.checkpoint_dir:
-        Path(args.checkpoint_dir).mkdir(parents=True, exist_ok=True)
-        
-    os.environ["CUDA_DEVICE_ORDER"]     =  args.cuda_device_order
-    os.environ["CUDA_VISIBLE_DEVICES"]  =  args.cuda_visible_devices        
+    # Make folder if not exist
+    os.makedirs(args.checkpoint_dir + "/args", mode=0o777, exist_ok=True)
+    os.makedirs(args.save_dir, mode=0o777, exist_ok=True)
     
+    # Save args to json
+    if not os.path.isfile(args.checkpoint_dir + "/args/args_" + datetime.datetime.now().strftime("%y%m%d_%H%M") + ".json"):
+        with open(args.checkpoint_dir + "/args/args_" + datetime.datetime.now().strftime("%y%m%d_%H%M") + ".json", "w") as f:
+            json.dump(args.__dict__, f, indent=2)
+
     main(args)
+
+
+

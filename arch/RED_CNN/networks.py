@@ -22,7 +22,7 @@ class RED_CNN(nn.Module):
         self.relu = nn.ReLU()
 
         # Loss
-        self.criterion = nn.MSELoss()
+        self.loss = nn.MSELoss()
 
     def forward(self, x):
         # encoder
@@ -43,7 +43,5 @@ class RED_CNN(nn.Module):
         out = self.tconv4(self.relu(out))
         out = self.tconv5(self.relu(out))
         out += residual_1
-
         out = self.relu(out)
-        
         return out

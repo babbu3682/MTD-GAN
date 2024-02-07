@@ -5,13 +5,42 @@ from math import exp
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from module.pytorch_ssim_3d import SSIM3D
 from module.piq import FID
 from torchvision import models
 from module.piq.feature_extractors import InceptionV3
 
-# reference: https://github.com/geonm/EnhanceNet-Tensorflow/blob/d0e527418f8b3fd167a61c8777483259d04fc4ab/losses.py
-# reference: https://github.com/NVIDIA/pix2pixHD/blob/5a2c87201c5957e2bf51d79b8acddb9cc1920b26/models/networks.py
+
+
+
+# Feature-based Metrics
+## FID
+def compute_feat(input, target, pred, device='cpu'):
+    # Ref: https://github.com/photosynthesis-team/piq/blob/9948a52fc09ac5f7fb3618ce64b7086f5c3109da/piq/base.py#L18
+    assert input.shape == target.shape and target.shape == pred.shape
+
+    feature_extractor = InceptionV3()
+    feature_extractor.to(device)
+    feature_extractor.eval()
+
+    input_features  = feature_extractor(input.repeat(1,3,1,1))
+    target_features = feature_extractor(target.repeat(1,3,1,1))
+    pred_features   = feature_extractor(pred.repeat(1,3,1,1))
+    
+    assert len(input_features) == 1, f"feature_encoder must return list with features from one layer. Got {len(input_features)}"
+    
+    return input_features[0].flatten(1), target_features[0].flatten(1), pred_features[0].flatten(1)
+
+def compute_FID(input_feats, target_feats, pred_feats):
+    fid_metric  = FID()
+    assert len(input_feats.shape) == 2 and len(target_feats.shape) == 2 and len(pred_feats.shape) == 2
+    
+    input_fid = fid_metric(input_feats, target_feats)
+    gt_fid    = fid_metric(target_feats, target_feats)
+    pred_fid  = fid_metric(pred_feats, target_feats)
+
+    return input_fid, gt_fid, pred_fid
+
+## PL
 class Vgg19(torch.nn.Module):
     def __init__(self, requires_grad=False):
         super(Vgg19, self).__init__()
@@ -45,6 +74,7 @@ class Vgg19(torch.nn.Module):
         return out
     
 class VGGLoss(torch.nn.Module):
+    # Ref: https://github.com/geonm/EnhanceNet-Tensorflow/blob/d0e527418f8b3fd167a61c8777483259d04fc4ab/losses.py, https://github.com/NVIDIA/pix2pixHD/blob/5a2c87201c5957e2bf51d79b8acddb9cc1920b26/models/networks.py
     def __init__(self, device):
         super(VGGLoss, self).__init__()        
         self.vgg = Vgg19().to(device)
@@ -60,8 +90,24 @@ class VGGLoss(torch.nn.Module):
             loss += self.weights[i]*self.criterion(x_vgg[i], y_vgg[i].detach())        
         return loss
 
-# reference: https://github.com/chongyangma/cs231n/blob/master/assignments/assignment3/style_transfer_pytorch.py
+def compute_PL(input, target, pred, option=True, device='cpu'):
+    vgg_metric  = VGGLoss(device=device)
+
+    assert len(input.shape) == 4 and len(target.shape) == 4 and len(pred.shape) == 4
+
+    if option:
+        input_pl  = vgg_metric(input, target)
+        gt_pl     = vgg_metric(target, target)
+        pred_pl   = vgg_metric(pred, target)
+        return input_pl, gt_pl, pred_pl
+
+    else :   
+        pred_pl   = vgg_metric(pred, target)    
+        return pred_pl
+
+## TML
 class TextureMatchingLoss(torch.nn.Module):
+    # Ref: https://github.com/chongyangma/cs231n/blob/master/assignments/assignment3/style_transfer_pytorch.py
     def __init__(self, patch_size=16, use_patch=True, device='cuda'):
         super(TextureMatchingLoss, self).__init__()
         self.patch_size = patch_size
@@ -103,111 +149,65 @@ class TextureMatchingLoss(torch.nn.Module):
             if self.use_patch:
                 loss += self.weights[i]*self.criterion(self.gram_matrix(self.patch_resize(x_vgg[i])), self.gram_matrix(self.patch_resize(y_vgg[i].detach())))           
             else:
-                loss += self.weights[i]*self.criterion(self.gram_matrix(x_vgg[i]), self.gram_matrix(y_vgg[i].detach()))         
+                loss += self.weights[i]*self.criterion(self.gram_matrix(x_vgg[i]), self.gram_matrix(y_vgg[i].detach()))
 
         return loss
 
-def compute_feat(x, y, pred, device='cpu'):
-    if len(x.size()) == 2:
-        shape_ = x.shape[-1]
-        y    = x.view(1, 1, shape_, shape_ )
-        y    = y.view(1, 1, shape_, shape_ )
-        pred = pred.view(1, 1, shape_, shape_ )
-
-    feature_extractor = InceptionV3()
-    feature_extractor.to(device)
-    feature_extractor.eval()
-    N = x.shape[0]
-
-    x_features    = feature_extractor(x.repeat(1,3,1,1))
-    y_features    = feature_extractor(y.repeat(1,3,1,1))
-    pred_features = feature_extractor(pred.repeat(1,3,1,1))
-    
-    assert len(x_features) == 1, f"feature_encoder must return list with features from one layer. Got {len(x_features)}"
-    
-    return x_features[0].view(N, -1), y_features[0].view(N, -1), pred_features[0].view(N, -1)
-
-def compute_FID(x_feats, y_feats, pred_feats):
-    fid_metric  = FID()
-    
-    assert len(x_feats.shape) == 2 and len(y_feats.shape) == 2 and len(pred_feats.shape) == 2
-    
-    originial_fid  = fid_metric(x_feats,    y_feats)    
-    pred_fid       = fid_metric(pred_feats, y_feats)    
-    gt_fid         = fid_metric(y_feats,    y_feats)    
-
-    return originial_fid, pred_fid, gt_fid
-
-def compute_Perceptual(x, y, pred, option=True, device='cpu'):
-    vgg_metric  = VGGLoss(device=device)
-
-    assert len(x.shape) == 4 and len(y.shape) == 4 and len(pred.shape) == 4
-
-    if option:
-        originial_percep  = vgg_metric(x, y)    
-        pred_percep       = vgg_metric(pred, y)    
-        gt_percep         = vgg_metric(y, y)    
-        return originial_percep, pred_percep, gt_percep
-
-    else :   
-        pred_percep       = vgg_metric(pred, y)    
-        return pred_percep
-
-def compute_TML(x, y, pred, option=True, device='cpu'):
+def compute_TML(input, target, pred, option=True, device='cpu'):
     tml_metric  = TextureMatchingLoss(device=device)
 
-    assert len(x.shape) == 4 and len(y.shape) == 4 and len(pred.shape) == 4
+    assert len(input.shape) == 4 and len(target.shape) == 4 and len(pred.shape) == 4
 
     if option:
-        originial_tml  = tml_metric(x, y)    
-        pred_tml       = tml_metric(pred, y)    
-        gt_tml         = tml_metric(y, y)    
-        return originial_tml, pred_tml, gt_tml
-
+        input_tml  = tml_metric(input, target)
+        gt_tml     = tml_metric(target, target)
+        pred_tml   = tml_metric(pred, target)
+        return input_tml, gt_tml, pred_tml
     else :   
-        pred_tml       = tml_metric(pred, y)    
+        pred_tml   = tml_metric(pred, target)    
         return pred_tml
 
-# Ref: https://github.com/SSinyu/WGAN-VGG/blob/d9af4a2cf6d1f4271546e0c01847bbc38d13b910/metric.py#L7
 
-def compute_measure(x, y, pred, data_range):
+
+# Pixel-based Metrics (Ref: https://github.com/SSinyu/WGAN-VGG/blob/d9af4a2cf6d1f4271546e0c01847bbc38d13b910/metric.py#L7)
+## RMSE
+def compute_RMSE(input, target, pred):
+    mse_metric = torch.nn.MSELoss()
+    assert len(input.shape) == 4 and len(target.shape) == 4 and len(pred.shape) == 4
+
+    input_rmse  = torch.sqrt(mse_metric(input, target)).item()
+    gt_rmse     = torch.sqrt(mse_metric(target, target)).item()
+    pred_rmse   = torch.sqrt(mse_metric(pred, target)).item()
+    return input_rmse, gt_rmse, pred_rmse
+
+## PSNR
+def compute_PSNR(input, target, pred, data_range=1.0):
+    mse_metric = torch.nn.MSELoss()
+    assert len(input.shape) == 4 and len(target.shape) == 4 and len(pred.shape) == 4
     
-    original_psnr = compute_PSNR(x, y, data_range)
-    original_ssim = compute_SSIM(x, y, data_range)
-    original_rmse = compute_RMSE(x, y)
-    
-    pred_psnr     = compute_PSNR(pred, y, data_range)
-    pred_ssim     = compute_SSIM(pred, y, data_range)
-    pred_rmse     = compute_RMSE(pred, y)
+    input_mse  = mse_metric(input, target) + 1e-10 # prevent to inf value.
+    input_psnr = 10 * torch.log10((data_range ** 2) / input_mse).item()
 
-    gt_psnr       = compute_PSNR(y, y, data_range)
-    gt_ssim       = compute_SSIM(y, y, data_range)
-    gt_rmse       = compute_RMSE(y, y)    
+    gt_mse  = mse_metric(target, target) + 1e-10 # prevent to inf value.
+    gt_psnr = 10 * torch.log10((data_range ** 2) / gt_mse).item()
 
-    return (original_psnr, original_ssim, original_rmse), (pred_psnr, pred_ssim, pred_rmse), (gt_psnr, gt_ssim, gt_rmse)
+    pred_mse  = mse_metric(pred, target) + 1e-10 # prevent to inf value.
+    pred_psnr = 10 * torch.log10((data_range ** 2) / pred_mse).item()        
 
+    return input_psnr, gt_psnr, pred_psnr
 
-def compute_MSE(img1, img2):
-    return ((img1 - img2) ** 2).mean()
+## SSIM
+def gaussian(window_size, sigma):
+    gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
+    return gauss / gauss.sum()
 
+def create_window(window_size, channel):
+    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
+    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
+    window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
+    return window
 
-def compute_RMSE(img1, img2):
-    if type(img1) == torch.Tensor:
-        return torch.sqrt(compute_MSE(img1, img2)).item()
-    else:
-        return np.sqrt(compute_MSE(img1, img2))
-
-
-def compute_PSNR(img1, img2, data_range):
-    if type(img1) == torch.Tensor:
-        mse_ = compute_MSE(img1, img2) + 1e-10 # prevent to inf value.
-        return 10 * torch.log10((data_range ** 2) / mse_).item()
-    else:
-        mse_ = compute_MSE(img1, img2) + 1e-10 # prevent to inf value.
-        return 10 * np.log10((data_range ** 2) / mse_)
-
-
-def compute_SSIM(img1, img2, data_range, window_size=11, channel=1, size_average=True):
+def ssim(img1, img2, data_range=1.0, window_size=11, channel=1, size_average=True):
     # referred from https://github.com/Po-Hsun-Su/pytorch-ssim
     if len(img1.size()) == 2:
         shape_ = img1.shape[-1]
@@ -234,32 +234,14 @@ def compute_SSIM(img1, img2, data_range, window_size=11, channel=1, size_average
     else:
         return ssim_map.mean(1).mean(1).mean(1).item()
 
-
-def gaussian(window_size, sigma):
-    gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
-    return gauss / gauss.sum()
-
-
-def create_window(window_size, channel):
-    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
-    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
-    window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
-    return window
-
-
-def compute_measure_3D(x, y, pred, data_range):
-    ssim_loss = SSIM3D(window_size = 11)
-
-    original_psnr = compute_PSNR(x, y, data_range)
-    original_ssim = ssim_loss(x, y)
-    original_rmse = compute_RMSE(x, y)
+def compute_SSIM(input, target, pred, data_range=1.0):
+    assert len(input.shape) == 4 and len(target.shape) == 4 and len(pred.shape) == 4
     
-    pred_psnr     = compute_PSNR(pred, y, data_range)
-    pred_ssim     = ssim_loss(pred, y)
-    pred_rmse     = compute_RMSE(pred, y)
+    input_ssim  = ssim(input, target, data_range)
+    gt_ssim     = ssim(target, target, data_range)
+    pred_ssim   = ssim(pred, target, data_range)
 
-    gt_psnr       = compute_PSNR(y, y, data_range)
-    gt_ssim       = ssim_loss(y, y)
-    gt_rmse       = compute_RMSE(y, y)    
+    return input_ssim, gt_ssim, pred_ssim
 
-    return (original_psnr, original_ssim, original_rmse), (pred_psnr, pred_ssim, pred_rmse), (gt_psnr, gt_ssim, gt_rmse)
+
+
