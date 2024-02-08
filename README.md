@@ -1,6 +1,6 @@
 # MTD-GAN - Official Pytorch Implementation
 
-It is currently incomplete. It will be updated in the future.
+It is currently incomplete. It will be still updated.
 
 <p align="center"><img width="100%" src="figures/Graphical_Abstract.png" /></p>
 
@@ -19,7 +19,7 @@ It is currently incomplete. It will be updated in the future.
 ## Paper
 This repository provides the official implementation code of MTD-GAN in the following paper:<br/>
 <b>Generative Adversarial Network with Robust Discriminator Through Multi-Task Learning for Low-Dose CT Denoising</b><br/><br/>
-[Sunggu Kyung](https://github.com/babbu3682), Jongjun Won, Seongyong Pak, Sunwoo Kim, Sangyoon Lee, Kanggil Park, Gil-Sun Hong, and Namkug Kim<br/>
+Authors: [Sunggu Kyung](https://github.com/babbu3682), Jongjun Won, Seongyong Pak, Sunwoo Kim, Sangyoon Lee, Kanggil Park, Gil-Sun Hong, and Namkug Kim<br/><br/>
 [MI2RL LAB](https://www.mi2rl.co/)<br/><br/>
 (Under revision...) IEEE Transactions on Medical Imaging (TMI)<br/>
 
