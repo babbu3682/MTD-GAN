@@ -71,11 +71,8 @@ datasets/MAYO
                     .
 ```
 
-### 3. Upstream
+### script examples
 
-#### 📋 To Do List
-- [x] publish previous works' weights
-- [x] publish our works' weights
 
 
 **+ train**:
@@ -124,10 +121,9 @@ CUDA_VISIBLE_DEVICES=2 python -W ignore test.py \
 --epoch 77777
 ```
 
-
 ## Excuse
 For personal information security reasons of medical data in Korea, our data cannot be disclosed.
-
+The previous and our works' weights are too large to upload, please contact us by email by filling out the appropriate form.
 
 ## 📝 Citation
 If you use this code for your research, please cite our papers:
