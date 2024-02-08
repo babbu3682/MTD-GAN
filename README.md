@@ -40,9 +40,9 @@ $ pip install -r requirements.txt
 ```
 
 ### 2. Preparing data
-#### Download the dataset from [this repository](https://www.aapm.org/grandchallenge/lowdosect/).
+#### Download the dataset from [Low Dose CT Grand Challange](https://www.aapm.org/grandchallenge/lowdosect/).
 
-- The processed dataset directory structure
+- The processed dataset directory structure as follows:
 ```
 datasets/MAYO
     train
@@ -73,9 +73,7 @@ datasets/MAYO
 
 ### script examples
 
-
-
-**+ train**:
+**• train**:
 ```bash
 CUDA_VISIBLE_DEVICES=2 python -W ignore train.py \
 --dataset 'mayo' \
@@ -102,7 +100,7 @@ CUDA_VISIBLE_DEVICES=2 python -W ignore train.py \
 --memo 'abdomen, 500 epoch, node 14'
 ```
 
-**+ test**:
+**• test**:
 ```bash
 CUDA_VISIBLE_DEVICES=2 python -W ignore test.py \
 --dataset 'mayo_test' \
@@ -121,7 +119,7 @@ CUDA_VISIBLE_DEVICES=2 python -W ignore test.py \
 --epoch 77777
 ```
 
-## Excuse
+## 🙏 Excuse
 For personal information security reasons of medical data in Korea, our data cannot be disclosed.
 The previous and our works' weights are too large to upload, please contact us by email by filling out the appropriate form.
 
@@ -132,9 +130,6 @@ If you use this code for your research, please cite our papers:
 ```
 
 ## 🤝 Acknowledgement
-We build MTD-GAN framework by referring to the released code at [qubvel/segmentation_models.pytorch](https://github.com/qubvel/segmentation_models.pytorch) and [Project-MONAI/MONAI](https://github.com/Project-MONAI/MONAI). 
-This is a patent-pending technology.
-
 We acknowledge the open-source libraries, including the [Diffuser](https://github.com/huggingface/diffusers) and [MONAI Generative Models](https://github.com/Project-MONAI/GenerativeModels), which enabled valuable comparisons in this study, and we extend our thanks to the pioneering authors (e.g., [RED-CNN](https://github.com/SSinyu/RED-CNN), [EDCNN](https://github.com/workingcoder/EDCNN), [CTformer](https://github.com/wdayang/CTformer), [Restormer](https://github.com/swz30/Restormer), [WGAN_VGG](https://github.com/hyeongyuy/CT-WGAN_VGG_tensorflow), [MAP-NN](https://github.com/hmshan/MAP-NN), [DUGAN](https://github.com/Hzzone/DU-GAN)).
 
 ### 🛡️ License <a name="license"></a>
