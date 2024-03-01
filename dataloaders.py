@@ -1,7 +1,5 @@
 from create_datasets.Sinogram import *
 from create_datasets.Mayo import *
-from create_datasets.Follow import *    
-from create_datasets.Thyroid import *    
 from torch.utils.data import DataLoader
 
 def get_train_dataloader(name, args):

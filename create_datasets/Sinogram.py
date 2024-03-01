@@ -195,52 +195,6 @@ def Sinogram_Dataset_DCM(mode, type='window'):
 
 # TEST Sinogram Task
 def TEST_Sinogram_Dataset_DCM(mode, type):
-    # low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
-    # high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
-
-    # low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/20/*/*/*_00047.dcm')) # A
-    # high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/X/*/*/*_00047.dcm'))
-
-    # low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/CHU_SOO_SEO_F65/20/*/*/*_00025.dcm')) # B
-    # high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/CHU_SOO_SEO_F65/X/*/*/*_00025.dcm'))
-    
-    low_imgs  = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/20/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171742/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171941_00041.dcm'] + ['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/20/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171742/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171941_00047.dcm'] + ['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHO_KYE_HWA_A_M80/20/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_160227/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHO_KYE_HWA_M80_001_20210521_160415_00036.dcm']) 
-    high_imgs = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/X/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171525/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171741_00041.dcm'] + ['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/X/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171525/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171741_00047.dcm'] + ['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHO_KYE_HWA_A_M80/X/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_160024/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHO_KYE_HWA_M80_001_20210521_160226_00036.dcm']) 
-
-    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
-    transforms = get_transforms(mode=mode, type=type)
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
-
-def TEST_Sinogram_Dataset_DCM_A(mode, type):
-    low_imgs  = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/20/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171742/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171941_00047.dcm']) 
-    high_imgs = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/X/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171525/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171741_00047.dcm']) 
-
-    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
-    transforms = get_transforms(mode=mode, type=type)
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
-
-def TEST_Sinogram_Dataset_DCM_B(mode, type):
-    low_imgs  = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/20/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171742/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171941_00041.dcm']) 
-    high_imgs = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHU_EUL_YEO_M60/X/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_171525/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHU_EUL_YEO_M60_001_20210521_171741_00041.dcm']) 
-
-    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
-    transforms = get_transforms(mode=mode, type=type)
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
-
-def TEST_Sinogram_Dataset_DCM_C(mode, type):
-    low_imgs  = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHO_KYE_HWA_A_M80/20/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_160227/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHO_KYE_HWA_M80_001_20210521_160415_00036.dcm']) 
-    high_imgs = list_sort_nicely(['/workspace/sunggu/4.Dose_img2img/dataset/[sinogram]Brain_3mm_DCM/Test/CHO_KYE_HWA_A_M80/X/Head^01_ER_BrainSpiral_(Adult)_Standard_-_WFBP_20210521_160024/Brain_Axial_B40f_3.0_(3.0)_[A,0]/CHO_KYE_HWA_M80_001_20210521_160226_00036.dcm']) 
-
-    files = [{"n_20": low_name, "n_100": high_name, "path_n_20":low_path, "path_n_100":high_path} for low_name, high_name, low_path, high_path in zip(low_imgs, high_imgs, low_imgs, high_imgs)]
-    transforms = get_transforms(mode=mode, type=type)
-
-    return Dataset(data=files, transform=transforms), default_collate_fn
-
-# TEST Sinogram Task
-def TEST_Sinogram_Dataset_DCM_TEST(mode, type):
     low_imgs  = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/20/*/*/*.dcm'))
     high_imgs = list_sort_nicely(glob.glob('/workspace/sunggu/4.Dose_img2img/dataset/*Brain_3mm_DCM/Test/*/X/*/*/*.dcm'))
 
@@ -248,3 +202,4 @@ def TEST_Sinogram_Dataset_DCM_TEST(mode, type):
     transforms = get_transforms(mode=mode, type=type)
 
     return Dataset(data=files, transform=transforms), default_collate_fn
+

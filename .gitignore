@@ -120,4 +120,4 @@ predictions/
 백업용/
 train.sh
 test.sh
-
+.gitignore
