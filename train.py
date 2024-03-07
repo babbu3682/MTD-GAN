@@ -6,6 +6,7 @@ import json
 import random
 import torch
 import numpy as np
+from torch.utils.tensorboard import SummaryWriter
 from collections import defaultdict
 import utils
 from dataloaders import get_train_dataloader
@@ -82,7 +83,6 @@ def main(args):
     utils.print_args(args)
     device = torch.device(args.device)
     print("cpu == ", os.cpu_count())
-
     # Dataloader
     data_loader_train, data_loader_valid = get_train_dataloader(name=args.dataset, args=args)   
 
@@ -123,23 +123,23 @@ def main(args):
                 dict(params=model.Discriminator.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=5e-4, amsgrad=False),
                 dict(params=weight_method_D.parameters(),     lr=0.025,   betas=(0.9, 0.999), eps=1e-08, weight_decay=5e-4, amsgrad=False)])
             scheduler_D = get_scheduler(name=args.scheduler, optimizer=optimizer_D, args=args)
-            optimizer_G = get_optimizer(name=args.optimizer, model=model.Generator, args=args)
+            optimizer_G = get_optimizer(name=args.optimizer, model=model.Generator, lr=args.lr)
             scheduler_G = get_scheduler(name=args.scheduler, optimizer=optimizer_G, args=args)
         else: 
             weight_method_D = None
-            optimizer_D = get_optimizer(name=args.optimizer, model=model.Discriminator, args=args)
+            optimizer_D = get_optimizer(name=args.optimizer, model=model.Discriminator, lr=args.lr)
             scheduler_D = get_scheduler(name=args.scheduler, optimizer=optimizer_D, args=args)
-            optimizer_G = get_optimizer(name=args.optimizer, model=model.Generator, args=args)
+            optimizer_G = get_optimizer(name=args.optimizer, model=model.Generator, lr=args.lr)
             scheduler_G = get_scheduler(name=args.scheduler, optimizer=optimizer_G, args=args)
     elif args.model == 'DU_GAN':
-        optimizer_Img_D  = get_optimizer(name=args.optimizer,model=model.Image_Discriminator, args=args)
+        optimizer_Img_D  = get_optimizer(name=args.optimizer,model=model.Image_Discriminator, lr=args.lr)
         scheduler_Img_D  = get_scheduler(name=args.scheduler, optimizer=optimizer_Img_D, args=args)
-        optimizer_Grad_D = get_optimizer(name=args.optimizer,model=model.Grad_Discriminator, args=args)
+        optimizer_Grad_D = get_optimizer(name=args.optimizer,model=model.Grad_Discriminator, lr=args.lr)
         scheduler_Grad_D = get_scheduler(name=args.scheduler, optimizer=optimizer_Grad_D, args=args)
-        optimizer_G      = get_optimizer(name=args.optimizer,model=model.Generator, args=args)
+        optimizer_G      = get_optimizer(name=args.optimizer,model=model.Generator, lr=args.lr)
         scheduler_G      = get_scheduler(name=args.scheduler, optimizer=optimizer_G, args=args)        
     else : 
-        optimizer = get_optimizer(name=args.optimizer,model=model, args=args)
+        optimizer = get_optimizer(name=args.optimizer,model=model, lr=args.lr)
         scheduler = get_scheduler(name=args.scheduler, optimizer=optimizer, args=args)
 
     # Resume
@@ -172,6 +172,10 @@ def main(args):
             scheduler.load_state_dict(checkpoint['scheduler'])
             utils.fix_optimizer(optimizer)
 
+    # Tensorboard
+    tensorboard = SummaryWriter(args.checkpoint_dir + '/runs')
+    print('Writing Tensorboard logs to ', args.checkpoint_dir + '/runs')
+
     # Etc traing setting
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
@@ -184,54 +188,78 @@ def main(args):
         if args.model == 'RED_CNN' or args.model == 'ED_CNN': 
             train_stats = train_CNN_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
             valid_stats = valid_CNN_Based_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)   
 
             # Transformer based
         elif args.model == 'Restormer' or args.model == 'CTformer': 
             train_stats = train_TR_Based_Previous(model, data_loader_train, optimizer, device, epoch, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)
             valid_stats = valid_TR_Based_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)          
 
         # GAN based
             # Previous        
         elif args.model == 'WGAN_VGG': 
             train_stats = train_WGAN_VGG_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)                        
             valid_stats = valid_WGAN_VGG_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
-
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)            
 
         elif args.model == 'MAP_NN': 
             train_stats = train_MAP_NN_Previous(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
             valid_stats = valid_MAP_NN_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
-
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)            
 
         elif args.model == 'DU_GAN': 
             train_stats = train_DUGAN_Previous(model, data_loader_train, optimizer_G, optimizer_Img_D, optimizer_Grad_D, device, epoch, args.print_freq, args.batch_size)            
             print("Averaged train_stats: ", train_stats)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
             valid_stats = valid_DUGAN_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
-
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)            
 
         # DN based
             # Previous        
         elif args.model == 'DDPM' or args.model == 'DDIM' or args.model == 'PNDM' or args.model == 'DPM':
             train_stats = train_DN_Previous(model, data_loader_train, optimizer, device, epoch, args.print_freq, args.batch_size)
             print("Averaged train_stats: ", train_stats)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
             valid_stats = valid_DN_Previous(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
-
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)          
 
             # Ours
         elif args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
             train_stats = train_MTD_GAN_Ours(model, data_loader_train, optimizer_G, optimizer_D, device, epoch, args.print_freq, args.batch_size, weight_method_D)
             print("Averaged train_stats: ", train_stats)
+            for key, value in train_stats.items():
+                tensorboard.add_scalar(f'Train Stats/{key}', value, epoch)            
             valid_stats = valid_MTD_GAN_Ours(model, loss, data_loader_valid, device, epoch, args.save_dir, args.print_freq)
             print("Averaged valid_stats: ", valid_stats)
+            for key, value in valid_stats.items():
+                tensorboard.add_scalar(f'Valid Stats/{key}', value, epoch)
         
         # LR scheduler update
         if args.model == 'WGAN_VGG' or args.model == 'MAP_NN' or args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
@@ -290,6 +318,7 @@ def main(args):
             f.write(json.dumps(log_stats) + "\n")
 
     # Finish
+    tensorboard.close()
     total_time_str = str(datetime.timedelta(seconds=int(time.time()-start_time)))
     print('Training time {}'.format(total_time_str))
 
