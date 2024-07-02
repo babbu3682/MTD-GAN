@@ -1980,8 +1980,10 @@ class MTD_GAN_Method(nn.Module):
                         'D/fake_enc': self.gan_metric_cls(fake_enc, 0.), 
                         'D/real_dec': self.gan_metric_seg(real_dec, 1., x-y),
                         'D/fake_dec': self.gan_metric_seg(fake_dec, 0., x-y),
+
                         'D/rec_loss_real': rec_loss_real,
                         'D/rec_loss_fake': rec_loss_fake,
+                        
                         'D/consist_loss_real_enc': consist_loss_real_enc,
                         'D/consist_loss_real_dec': consist_loss_real_dec,
                         'D/consist_loss_fake_enc': consist_loss_fake_enc,

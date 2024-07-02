@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from generative.inferers import DiffusionInferer
-from generative.networks.nets import DiffusionModelUNet
-from generative.networks.schedulers import DDPMScheduler, DDIMScheduler, PNDMScheduler, DPMScheduler, DPMScheduler_Multi
+from .generative.inferers import DiffusionInferer
+from .generative.networks.nets import DiffusionModelUNet
+from .generative.networks.schedulers import DDPMScheduler, DDIMScheduler, PNDMScheduler, DPMScheduler, DPMScheduler_Multi
 from torch.cuda.amp import GradScaler, autocast
 
 # Reference: https://github.com/Project-MONAI/GenerativeModels/blob/main/tutorials/generative/2d_ddpm/2d_ddpm_tutorial.ipynb

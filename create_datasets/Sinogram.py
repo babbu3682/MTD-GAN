@@ -156,18 +156,6 @@ def get_transforms(mode="train", type="full_patch"):
                 # Normalize
                 # Lambdad(keys=["n_20", "n_100"], func=functools.partial(minmax_normalize, option=False)),                             
                 ToTensord(keys=["n_20", "n_100"]),
-            ]) 
-
-        elif type == "window_foreground":
-            return Compose([
-                Lambdad(keys=["n_20", "n_100"], func=get_pixels_hu),
-                ScaleIntensityRanged(keys=["n_20", "n_100"], a_min=0.0, a_max=80.0, b_min=0.0, b_max=1.0, clip=True),     # Windowing HU [min:0, max:80]
-                AddChanneld(keys=["n_20", "n_100"]),     
-
-                CropForegroundd(keys=["n_20", "n_100"], source_key="n_100", select_fn=lambda x: x > 0),
-
-                # Normalize
-                ToTensord(keys=["n_20", "n_100"]),
             ])
 
  
@@ -202,4 +190,3 @@ def TEST_Sinogram_Dataset_DCM(mode, type):
     transforms = get_transforms(mode=mode, type=type)
 
     return Dataset(data=files, transform=transforms), default_collate_fn
-

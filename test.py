@@ -136,13 +136,11 @@ def main(args):
 
     # Ours
     elif args.model == 'MTD_GAN' or args.model == 'Ablation_CLS' or args.model == 'Ablation_SEG' or args.model == 'Ablation_CLS_SEG' or args.model == 'Ablation_CLS_REC' or args.model == 'Ablation_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC' or args.model == 'Ablation_CLS_SEG_REC_NDS' or args.model == 'Ablation_CLS_SEG_REC_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC' or args.model == 'Ablation_CLS_SEG_REC_NDS_RC_ResFFT' or args.model == 'MTD_GAN_All_One' or args.model == 'MTD_GAN_Method':
-        test_stats = test_MTD_GAN_Ours(model, loss, data_loader_test, device, args.save_dir, args.epoch)
+        test_stats = test_MTD_GAN_Ours(model, loss, data_loader_test, device, args.save_dir)
         print("Averaged test stats: ", test_stats)  
                 
-
     # Log & Save
-    log_stats = {**{f'test_{k}': v for k, v in test_stats.items()},
-                 'epoch': args.epoch}
+    log_stats = {**{f'test_{k}': v for k, v in test_stats.items()}, 'epoch': args.epoch}
 
     with open(args.checkpoint_dir + "/test_log.txt", "a") as f:
         f.write(json.dumps(log_stats) + "\n")

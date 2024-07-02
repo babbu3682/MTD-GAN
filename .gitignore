@@ -120,3 +120,8 @@ predictions/
 백업용/
 train.sh
 test.sh
+create_datasets/Mayo_BACKUP.py
+create_datasets/Sinogram_BACKUP.py
+test_BACKUP.py
+engine_BACKUP.py
+잡다/

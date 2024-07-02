@@ -118,7 +118,8 @@ class EDCNN(nn.Module):
         self.relu = nn.LeakyReLU()
 
         # Loss
-        self.loss = CompoundLoss()
+        self.criterion = CompoundLoss()
+        # self.loss = CompoundLoss()
 
     def forward(self, x):
         out_0 = self.conv_sobel(x)

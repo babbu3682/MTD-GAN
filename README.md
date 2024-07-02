@@ -1,7 +1,5 @@
 # MTD-GAN - Official Pytorch Implementation
 
-It is currently incomplete. It will be still updated.
-
 <p align="center"><img width="100%" src="figures/Graphical_Abstract.png" /></p>
 
 ## 💡 Highlights
@@ -14,18 +12,14 @@ It is currently incomplete. It will be still updated.
 + Evaluate our network with extensive experiments, including an ablation study and visual scoring using two distinct datasets of brain and abdominal CT images. Six metrics based on pixel- and feature-spaces were used, and the results indicated superior performances in both quantitative and qualitative measures compared to those of state-of-the-art denoising techniques.
 
 
-
-
-## Paper
+## 📄 Paper
 This repository provides the official implementation code of MTD-GAN in the following paper:<br/>
 <b>Generative Adversarial Network with Robust Discriminator Through Multi-Task Learning for Low-Dose CT Denoising</b><br/><br/>
 Authors: [Sunggu Kyung](https://github.com/babbu3682), Jongjun Won, Seongyong Pak, Sunwoo Kim, Sangyoon Lee, Kanggil Park, Gil-Sun Hong, and Namkug Kim<br/><br/>
 [MI2RL LAB](https://www.mi2rl.co/)<br/><br/>
 (Under revision...) IEEE Transactions on Medical Imaging (TMI)<br/>
 
-
-
-## Requirements
+## 💾 Requirements
 + Linux
 + CUDA 11.6
 + Python 3.8.5
@@ -71,7 +65,7 @@ datasets/MAYO
                     .
 ```
 
-### script examples
+### 3. Script examples
 
 **• train**:
 ```bash
@@ -119,6 +113,12 @@ CUDA_VISIBLE_DEVICES=2 python -W ignore test.py \
 --epoch 77777
 ```
 
+## 🎯 Short-Cut
++ CSV files for evaluating statistical significance with p-values using a paired t-test. [🖇️Link](https://github.com/babbu3682/MTD-GAN/tree/main/CSV_ZIP)
++ High-quality images included in our manuscript.                                        [🖇️Link](https://github.com/babbu3682/MTD-GAN/tree/main/HIGH_RESOLUTION_FIGURES)
++ Evaluation criteria for the blind reader study.                                        [🖇️Link](https://github.com/babbu3682/MTD-GAN/tree/main/BLIND_READER_STUDY)
+
+
 ## 🙏 Excuse
 For personal information security reasons of medical data in Korea, our data cannot be disclosed.
 The previous and our works' weights are too large to upload, please contact us by email by filling out the appropriate form.
@@ -130,7 +130,7 @@ If you use this code for your research, please cite our papers:
 ```
 
 ## 🤝 Acknowledgement
-We acknowledge the open-source libraries, including the [Diffuser](https://github.com/huggingface/diffusers) and [MONAI Generative Models](https://github.com/Project-MONAI/GenerativeModels), which enabled valuable comparisons in this study, and we extend our thanks to the pioneering authors (e.g., [RED-CNN](https://github.com/SSinyu/RED-CNN), [EDCNN](https://github.com/workingcoder/EDCNN), [CTformer](https://github.com/wdayang/CTformer), [Restormer](https://github.com/swz30/Restormer), [WGAN_VGG](https://github.com/hyeongyuy/CT-WGAN_VGG_tensorflow), [MAP-NN](https://github.com/hmshan/MAP-NN), [DUGAN](https://github.com/Hzzone/DU-GAN)).
+We acknowledge the open-source libraries, including the [Diffuser](https://github.com/huggingface/diffusers) and [MONAI Generative Models](https://github.com/Project-MONAI/GenerativeModels), which enabled valuable comparisons in this study, and we extend our thanks to the pioneering authors (e.g., [RED-CNN](https://github.com/SSinyu/RED-CNN), [EDCNN](https://github.com/workingcoder/EDCNN), [CTformer](https://github.com/wdayang/CTformer), [Restormer](https://github.com/swz30/Restormer), [WGAN_VGG](https://github.com/hyeongyuy/CT-WGAN_VGG_tensorflow), [MAP-NN](https://github.com/hmshan/MAP-NN), [DUGAN](https://github.com/Hzzone/DU-GAN)). The MTL weight adjustment code was referenced in [nash-mtl](https://github.com/AvivNavon/nash-mtl/tree/7cc1694a276ca6f2f9426ab18b8698c786bff4f0).
 
 ### 🛡️ License <a name="license"></a>
 Project is distributed under [MIT License](https://github.com/babbu3682/MTD-GAN/blob/main/LICENSE)

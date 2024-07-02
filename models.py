@@ -33,9 +33,9 @@ def get_model(name):
     # GAN-based models
     elif name == "WGAN_VGG":
         model = WGAN_VGG()
-    elif name == "MAP_NN":
+    elif name == "MAP_NN" or name == "MAP_NN_brain":
         model = MAP_NN()
-    elif name == "DU_GAN":
+    elif name == "DU_GAN" or name == "DU_GAN_brain":
         model = DUGAN()
 
     # DN-based models

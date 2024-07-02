@@ -7,13 +7,13 @@ def get_train_dataloader(name, args):
         train_dataset, train_collate_fn = Sinogram_Dataset_DCM(mode='train', type=args.dataset_type_train)
         valid_dataset, valid_collate_fn = Sinogram_Dataset_DCM(mode='valid', type=args.dataset_type_valid)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.train_num_workers, shuffle=True,  drop_last=True,  collate_fn=train_collate_fn)
-        valid_loader = DataLoader(valid_dataset, batch_size=1,               num_workers=args.valid_num_workers, shuffle=False, drop_last=False, collate_fn=valid_collate_fn) 
+        valid_loader = DataLoader(valid_dataset, batch_size=1,               num_workers=args.valid_num_workers, shuffle=False, drop_last=False, collate_fn=valid_collate_fn)
 
     elif name == 'mayo':
         train_dataset, train_collate_fn = MAYO_Dataset_DCM(mode='train', type=args.dataset_type_train)
         valid_dataset, valid_collate_fn = MAYO_Dataset_DCM(mode='valid', type=args.dataset_type_valid)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.valid_num_workers, shuffle=True,  drop_last=True,  collate_fn=train_collate_fn)
-        valid_loader = DataLoader(valid_dataset, batch_size=1,               num_workers=args.valid_num_workers, shuffle=False, drop_last=False, collate_fn=valid_collate_fn) 
+        valid_loader = DataLoader(valid_dataset, batch_size=1,               num_workers=args.valid_num_workers, shuffle=False, drop_last=False, collate_fn=valid_collate_fn)
 
     else: 
         raise Exception('Error...! args.data_folder_dir')
