@@ -1,9 +1,9 @@
 # CSV files for evaluating statistical significance with p-values using a paired t-test.
 
-<p align="center"><img width="100%" src="CSV_ZIP/figures/Brain_Total.png" /></p>
+<p align="center"><img width="100%" src="https://github.com/babbu3682/MTD-GAN/tree/main/CSV_ZIP/figures/Brain_Total.png" /></p>
 Fig. A. Comparison with previous methods on the brain test set for statistical significance evaluation, with p-values evaluated between MTD-GAN and other methods using a paired t-test. MTD-GAN demonstrated significantly better performance (P < 0.0001) compared to all previous works in all metrics, except for CTformer in terms of PSNR (p-value: 0.0255).
 
-<p align="center"><img width="100%" src="CSV_ZIP/figures/Abdomen_Total.png" /></p>
+<p align="center"><img width="100%" src="https://github.com/babbu3682/MTD-GAN/tree/main/CSV_ZIP/figures/Abdomen_Total.png" /></p>
 Fig. B. Comparison with previous methods on the abdomen test set for statistical significance evaluation, with p-values evaluated between MTD-GAN and other methods using a paired t-test. MTD-GAN demonstrated significantly better performance (P < 0.0001) compared to all previous works in all metrics.
 
 
