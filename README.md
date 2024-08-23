@@ -17,7 +17,8 @@ This repository provides the official implementation code of MTD-GAN in the foll
 <b>Generative Adversarial Network with Robust Discriminator Through Multi-Task Learning for Low-Dose CT Denoising</b><br/><br/>
 Authors: [Sunggu Kyung](https://github.com/babbu3682), Jongjun Won, Seongyong Pak, Sunwoo Kim, Sangyoon Lee, Kanggil Park, Gil-Sun Hong, and Namkug Kim<br/><br/>
 [MI2RL LAB](https://www.mi2rl.co/)<br/><br/>
-(Under revision...) IEEE Transactions on Medical Imaging (TMI)<br/>
+IEEE Transactions on Medical Imaging (TMI)<br/>
+DOI: 10.1109/TMI.2024.3449647
 
 ## 💾 Requirements
 + Linux
